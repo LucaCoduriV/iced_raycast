@@ -1,6 +1,6 @@
 use iced::{
-    Alignment, Color, Element, Length, Task,
-    widget::{column, container, row, scrollable, text, text_input},
+    Alignment, Background, Color, Element, Length, Task, gradient,
+    widget::{column, container, row, scrollable, space::horizontal, text, text_input},
 };
 
 #[derive(Default)]
@@ -9,9 +9,19 @@ pub struct Prism {
     entries: Vec<ListEntry>,
 }
 
+#[derive(Clone, Copy)]
 enum ListEntryKind {
     Command,
-    Program,
+    Application,
+}
+
+impl From<ListEntryKind> for &str {
+    fn from(val: ListEntryKind) -> Self {
+        match val {
+            ListEntryKind::Command => "Command",
+            ListEntryKind::Application => "Application",
+        }
+    }
 }
 
 struct ListEntry {
@@ -33,22 +43,22 @@ impl Prism {
                 ListEntry {
                     name: "Firefox".into(),
                     description: "Browser".into(),
-                    kind: ListEntryKind::Program,
+                    kind: ListEntryKind::Application,
                 },
                 ListEntry {
                     name: "Chrome".into(),
                     description: "Browser".into(),
-                    kind: ListEntryKind::Program,
+                    kind: ListEntryKind::Application,
                 },
                 ListEntry {
                     name: "Vivaldi".into(),
                     description: "Browser".into(),
-                    kind: ListEntryKind::Program,
+                    kind: ListEntryKind::Application,
                 },
                 ListEntry {
                     name: "Zen Browser".into(),
                     description: "Browser".into(),
-                    kind: ListEntryKind::Program,
+                    kind: ListEntryKind::Application,
                 },
             ],
         }
@@ -84,6 +94,7 @@ impl Prism {
             .entries
             .iter()
             .map(|ext| {
+                let kind: &str = ext.kind.into();
                 container(
                     row![
                         container(text(""))
@@ -105,7 +116,9 @@ impl Prism {
                                 .size(12)
                                 .color(Color::from_rgb(0.4, 0.4, 0.4)),
                         ]
-                        .spacing(2)
+                        .spacing(2),
+                        horizontal(),
+                        text(kind)
                     ]
                     .spacing(15)
                     .align_y(Alignment::Center),
@@ -117,19 +130,39 @@ impl Prism {
             })
             .collect();
 
-        container(column![input, scrollable(column(entries_list))])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(10)
-            .style(|_| container::Style {
-                background: Some(Color::from_rgba(0.12, 0.12, 0.12, 0.7).into()),
-                border: iced::Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
-                    width: 1.0,
-                    radius: 15.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
+        let gradient_line = container("")
+            .width(Length::Fill) // The line stretches horizontally
+            .height(1.0) // The thickness of your line
+            .style(|_theme| {
+                let fade_gradient = gradient::Linear::new(90.0) // Left to right
+                    .add_stop(0.0, Color::TRANSPARENT) // Start transparent
+                    .add_stop(0.5, Color::WHITE) // Peak at white in the middle
+                    .add_stop(1.0, Color::TRANSPARENT) // End transparent
+                    .into();
+
+                container::Style {
+                    background: Some(Background::Gradient(fade_gradient)),
+                    ..container::Style::default()
+                }
+            });
+
+        container(column![
+            input,
+            gradient_line,
+            scrollable(column(entries_list))
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(10)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgba(0.12, 0.12, 0.12, 0.7).into()),
+            border: iced::Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+                width: 1.0,
+                radius: 15.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
     }
 }
