@@ -1,7 +1,4 @@
-use iced::{
-    Color, Element, Event, Task, event,
-    widget::{container, text},
-};
+use iced::{Color, Element, Event, Task, event, widget::container};
 use iced_layershell::to_layer_message;
 
 use crate::prism::{Prism, PrismEvent};
@@ -13,7 +10,7 @@ pub struct Raycast {
 impl Default for Raycast {
     fn default() -> Self {
         Self {
-            prism: Prism::default(),
+            prism: Prism::new_placeholder(),
         }
     }
 }
@@ -25,6 +22,9 @@ impl Raycast {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::PrismEvent(prism_event) => {
+                self.prism.update(prism_event).map(Message::PrismEvent)
+            }
             _ => Task::none(),
         }
     }
@@ -48,8 +48,6 @@ impl Raycast {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
-    SearchInput(String),
     IcedEvent(Event),
     PrismEvent(PrismEvent),
-    Close,
 }
