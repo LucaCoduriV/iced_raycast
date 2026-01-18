@@ -122,7 +122,7 @@ impl Prism {
             .height(Length::Fill)
             .padding(10)
             .style(|_| container::Style {
-                background: Some(Color::from_rgb(0.12, 0.12, 0.12).into()),
+                background: Some(Color::from_rgba(0.12, 0.12, 0.12, 0.7).into()),
                 border: iced::Border {
                     color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
                     width: 1.0,
