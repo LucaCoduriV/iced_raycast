@@ -9,6 +9,3 @@ settings.json
 
 # JetBrains IDE
 .idea/
-
-# Temporary
-debug/
