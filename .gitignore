@@ -1,1 +1,14 @@
 /target
+
+# Zed IDE
+.zed/
+settings.json
+
+# VS Code
+.vscode/
+
+# JetBrains IDE
+.idea/
+
+# Temporary
+debug/
