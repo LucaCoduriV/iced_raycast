@@ -1,13 +1,19 @@
-use iced_layershell::application;
-use iced_layershell::reexport::{Anchor, KeyboardInteractivity};
-use iced_layershell::settings::{LayerShellSettings, Settings};
-
 use crate::app::Raycast;
 
 mod app;
 mod prism;
 
+#[cfg(not(target_os = "linux"))]
+pub fn main() -> Result<(), Error> {
+    iced::run(Raycast::update, Raycast::view)
+}
+
+#[cfg(target_os = "linux")]
 pub fn main() -> Result<(), iced_layershell::Error> {
+    use iced_layershell::application;
+    use iced_layershell::reexport::{Anchor, KeyboardInteractivity};
+    use iced_layershell::settings::{LayerShellSettings, Settings};
+
     application(
         Raycast::default,
         Raycast::namespace,
