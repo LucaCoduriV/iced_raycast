@@ -3,6 +3,9 @@ use iced::{
     widget::{column, container, row, scrollable, space::horizontal, text, text_input},
 };
 
+use crate::design_system::typo;
+use crate::design_system::typo::Typography;
+
 #[derive(Default)]
 pub struct Prism {
     query: String,
@@ -76,7 +79,8 @@ impl Prism {
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
         let input = text_input("Search for apps and commands...", &self.query)
             .on_input(PrismEvent::SearchInput)
-            .size(20)
+            .size(typo::TITLE_L.0)
+            .font(typo::TITLE_L.2)
             .padding(15)
             .style(|_theme, _status| text_input::Style {
                 background: Color::TRANSPARENT.into(),
@@ -95,8 +99,10 @@ impl Prism {
             .iter()
             .map(|ext| {
                 let kind: &str = ext.kind.into();
+
                 container(
                     row![
+                        // Icon Placeholder
                         container(text(""))
                             .width(32)
                             .height(32)
@@ -110,15 +116,17 @@ impl Prism {
                             }),
                         column![
                             text(&ext.name)
-                                .size(16)
+                                .typography(typo::TITLE_M)
                                 .color(Color::from_rgb(0.7, 0.7, 0.7)),
                             text(&ext.description)
-                                .size(12)
+                                .typography(typo::BODY_S)
                                 .color(Color::from_rgb(0.4, 0.4, 0.4)),
                         ]
                         .spacing(2),
                         horizontal(),
-                        text(kind).size(16).color(Color::from_rgb(0.7, 0.7, 0.7)),
+                        text(kind)
+                            .typography(typo::LABEL_L)
+                            .color(Color::from_rgb(0.7, 0.7, 0.7)),
                     ]
                     .spacing(15)
                     .align_y(Alignment::Center),
@@ -130,14 +138,15 @@ impl Prism {
             })
             .collect();
 
+        // Divider Line
         let gradient_line = container("")
-            .width(Length::Fill) // The line stretches horizontally
-            .height(1.0) // The thickness of your line
+            .width(Length::Fill)
+            .height(1.0)
             .style(|_theme| {
-                let fade_gradient = gradient::Linear::new(90.0) // Left to right
-                    .add_stop(0.0, Color::TRANSPARENT) // Start transparent
-                    .add_stop(0.5, Color::WHITE) // Peak at white in the middle
-                    .add_stop(1.0, Color::TRANSPARENT) // End transparent
+                let fade_gradient = gradient::Linear::new(90.0)
+                    .add_stop(0.0, Color::TRANSPARENT)
+                    .add_stop(0.5, Color::WHITE)
+                    .add_stop(1.0, Color::TRANSPARENT)
                     .into();
 
                 container::Style {
@@ -146,6 +155,7 @@ impl Prism {
                 }
             });
 
+        // Main Container
         container(column![
             input,
             gradient_line,
