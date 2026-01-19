@@ -117,8 +117,6 @@ pub mod typo {
     pub const HERO: Style = (96.0, LineHeight::Relative(1.10), ROBOTO_REGULAR);
 
     // --- 4. Semantic Aliases ---
-    // Use these to describe intent rather than appearance.
-    // This allows you to change all buttons at once later if needed.
 
     pub const BUTTON: Style = LABEL_L;
     pub const TOOLTIP: Style = BODY_S;

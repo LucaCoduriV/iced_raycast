@@ -22,6 +22,9 @@ pub fn main() -> Result<(), iced_layershell::Error> {
         Raycast::view,
     )
     .style(Raycast::style)
+    .font(include_bytes!("../fonts/Roboto-Regular.ttf").as_slice())
+    .font(include_bytes!("../fonts/Roboto-Medium.ttf").as_slice())
+    .font(include_bytes!("../fonts/RobotoMono-Regular.ttf").as_slice())
     .subscription(Raycast::subscription)
     .settings(Settings {
         layer_settings: LayerShellSettings {
