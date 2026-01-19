@@ -13,6 +13,7 @@ pub struct Prism {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 enum ListEntryKind {
     Command,
     Application,

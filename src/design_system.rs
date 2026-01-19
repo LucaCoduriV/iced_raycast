@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod colors {
     use iced::Color;
 
