@@ -118,7 +118,7 @@ impl Prism {
                         ]
                         .spacing(2),
                         horizontal(),
-                        text(kind)
+                        text(kind).size(16).color(Color::from_rgb(0.7, 0.7, 0.7)),
                     ]
                     .spacing(15)
                     .align_y(Alignment::Center),

@@ -1,6 +1,7 @@
 use crate::app::Raycast;
 
 mod app;
+mod design_system;
 mod prism;
 
 #[cfg(not(target_os = "linux"))]
