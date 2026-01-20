@@ -1,10 +1,10 @@
 use iced::{
     Alignment, Background, Color, Element, Length, Task, gradient,
-    widget::{column, container, row, scrollable, space::horizontal, text, text_input},
+    widget::{column, container, image, row, scrollable, space::horizontal, text, text_input},
 };
 
-use crate::design_system::typo;
-use crate::design_system::typo::Typography;
+use crate::design_system::{colors, icons, typo};
+use crate::design_system::{spacing, typo::Typography};
 
 #[derive(Default)]
 pub struct Prism {
@@ -104,37 +104,28 @@ impl Prism {
                 container(
                     row![
                         // Icon Placeholder
-                        container(text(""))
-                            .width(32)
-                            .height(32)
-                            .style(|_| container::Style {
-                                background: Some(Color::from_rgb(0.2, 0.2, 0.2).into()),
-                                border: iced::Border {
-                                    radius: 8.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            }),
+                        image("assets/icon_placeholder.png")
+                            .width(icons::LG)
+                            .height(icons::LG),
                         column![
                             text(&ext.name)
                                 .typography(typo::TITLE_M)
-                                .color(Color::from_rgb(0.7, 0.7, 0.7)),
+                                .color(colors::ON_SURFACE),
                             text(&ext.description)
                                 .typography(typo::BODY_S)
-                                .color(Color::from_rgb(0.4, 0.4, 0.4)),
+                                .color(colors::ON_SURFACE_VARIANT),
                         ]
-                        .spacing(2),
+                        .spacing(spacing::SPACE_XXS),
                         horizontal(),
                         text(kind)
                             .typography(typo::LABEL_L)
-                            .color(Color::from_rgb(0.7, 0.7, 0.7)),
+                            .color(colors::ON_SURFACE_VARIANT),
                     ]
-                    .spacing(15)
+                    .spacing(spacing::SPACE_M)
                     .align_y(Alignment::Center),
                 )
-                .padding(10)
+                .padding(spacing::SPACE_S)
                 .width(Length::Fill)
-                .style(move |_| container::Style::default())
                 .into()
             })
             .collect();
@@ -146,7 +137,7 @@ impl Prism {
             .style(|_theme| {
                 let fade_gradient = gradient::Linear::new(90.0)
                     .add_stop(0.0, Color::TRANSPARENT)
-                    .add_stop(0.5, Color::WHITE)
+                    .add_stop(0.5, colors::ON_SURFACE)
                     .add_stop(1.0, Color::TRANSPARENT)
                     .into();
 
@@ -164,11 +155,11 @@ impl Prism {
         ])
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(10)
+        .padding(spacing::SPACE_S)
         .style(|_| container::Style {
-            background: Some(Color::from_rgba(0.12, 0.12, 0.12, 0.7).into()),
+            background: Some(colors::SURFACE_CONTAINER.scale_alpha(0.8).into()),
             border: iced::Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+                color: colors::ON_SURFACE.scale_alpha(0.3),
                 width: 1.0,
                 radius: 15.0.into(),
             },
