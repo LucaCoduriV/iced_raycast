@@ -1,15 +1,18 @@
 use iced::{
-    Alignment, Background, Color, Element, Length, Task, gradient,
-    widget::{column, container, image, row, scrollable, space::horizontal, text, text_input},
+    Alignment, Background, Color, Element, Length, Subscription, Task, event, gradient,
+    keyboard::{self},
+    widget::{
+        button, column, container, image, row, scrollable, space::horizontal, text, text_input,
+    },
 };
 
-use crate::design_system::{colors, icons, typo};
-use crate::design_system::{spacing, typo::Typography};
+use crate::design_system::{colors, icons, spacing, typo, typo::Typography};
 
 #[derive(Default)]
 pub struct Prism {
     query: String,
     entries: Vec<ListEntry>,
+    selected_index: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -37,12 +40,17 @@ struct ListEntry {
 #[derive(Debug, Clone)]
 pub enum PrismEvent {
     SearchInput(String),
+    SelectNext,
+    SelectPrevious,
+    EntrySelected(usize),
+    Submit,
 }
 
 impl Prism {
     pub fn new_placeholder() -> Self {
         Prism {
             query: "".into(),
+            selected_index: 0,
             entries: vec![
                 ListEntry {
                     name: "Firefox".into(),
@@ -72,9 +80,51 @@ impl Prism {
         match message {
             PrismEvent::SearchInput(query) => {
                 self.query = query;
+                // Reset selection when searching to avoid out-of-bounds
+                self.selected_index = 0;
+                Task::none()
+            }
+            PrismEvent::SelectNext => {
+                if !self.entries.is_empty() {
+                    self.selected_index = (self.selected_index + 1).min(self.entries.len() - 1);
+                }
+                Task::none()
+            }
+            PrismEvent::SelectPrevious => {
+                self.selected_index = self.selected_index.saturating_sub(1);
+                Task::none()
+            }
+            PrismEvent::EntrySelected(index) => {
+                self.selected_index = index;
+                println!("Selected: {}", self.entries[index].name);
+                Task::none()
+            }
+            PrismEvent::Submit => {
+                if let Some(entry) = self.entries.get(self.selected_index) {
+                    println!("Launched via Enter: {}", entry.name);
+                }
                 Task::none()
             }
         }
+    }
+
+    pub fn subscription(&self) -> Subscription<PrismEvent> {
+        event::listen_with(|event, _status, _window| {
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+                match key {
+                    keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                        Some(PrismEvent::SelectPrevious)
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                        Some(PrismEvent::SelectNext)
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Enter) => Some(PrismEvent::Submit),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        })
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
@@ -98,12 +148,14 @@ impl Prism {
         let entries_list: Vec<Element<'a, PrismEvent>> = self
             .entries
             .iter()
-            .map(|ext| {
+            .enumerate()
+            .map(|(i, ext)| {
                 let kind: &str = ext.kind.into();
+                let is_selected = i == self.selected_index;
 
-                container(
+                // WRAP IN BUTTON for easy Hover + Click handling
+                button(
                     row![
-                        // Icon Placeholder
                         image("assets/icon_placeholder.png")
                             .width(icons::LG)
                             .height(icons::LG),
@@ -124,8 +176,31 @@ impl Prism {
                     .spacing(spacing::SPACE_M)
                     .align_y(Alignment::Center),
                 )
-                .padding(spacing::SPACE_S)
+                .on_press(PrismEvent::EntrySelected(i))
                 .width(Length::Fill)
+                .padding(spacing::SPACE_S)
+                .style(move |_theme, status| {
+                    // 6. STYLING: Conditional background
+                    let is_hovered = status == button::Status::Hovered;
+
+                    let bg_color = if is_selected || is_hovered {
+                        // Use a lighter/distinct color for selection/hover
+                        colors::ON_SURFACE.scale_alpha(0.1)
+                    } else {
+                        Color::TRANSPARENT
+                    };
+
+                    button::Style {
+                        background: Some(bg_color.into()),
+                        text_color: colors::ON_SURFACE,
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            ..iced::Border::default()
+                        },
+                        // rounded corners for list items
+                        ..Default::default()
+                    }
+                })
                 .into()
             })
             .collect();

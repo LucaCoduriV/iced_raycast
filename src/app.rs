@@ -30,7 +30,12 @@ impl Raycast {
     }
 
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        event::listen().map(Message::IcedEvent)
+        use iced::Subscription;
+
+        Subscription::batch(vec![
+            event::listen().map(Message::IcedEvent),
+            self.prism.subscription().map(Message::PrismEvent),
+        ])
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
