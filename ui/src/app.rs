@@ -53,6 +53,7 @@ impl Raycast {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    #[allow(dead_code)]
     IcedEvent(Event),
     PrismEvent(PrismEvent),
 }

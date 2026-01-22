@@ -1,14 +1,17 @@
-mod component;
+mod items;
+mod widgets;
 
-use core::{Application, Entity, get_entities, search::SearchEngine};
-use std::sync::Arc;
+use core::{get_entities, search::SearchEngine};
 
 use iced::{
     Element, Length, Subscription, Task, event, keyboard,
     widget::{column, container, scrollable},
 };
 
-use crate::design_system::{colors, spacing};
+use crate::{
+    design_system::{colors, spacing},
+    prism::items::ListEntry,
+};
 
 #[derive(Default)]
 pub struct Prism {
@@ -26,45 +29,6 @@ pub enum PrismEvent {
     EntrySelected(usize),
     Submit,
     EntriesLoaded(Vec<ListEntry>),
-}
-
-#[derive(Clone, Debug)]
-pub struct ListEntry {
-    entity: Arc<Entity>,
-}
-
-impl ListEntry {
-    fn name(&self) -> &str {
-        self.entity.as_ref().name()
-    }
-
-    fn description(&self) -> Option<&str> {
-        self.entity.as_ref().description()
-    }
-
-    fn kind(&self) -> &str {
-        match self.entity.as_ref() {
-            Entity::Application(_) => "Application",
-            Entity::Command(_) => "Command",
-        }
-    }
-
-    fn execute(&self) {
-        self.entity.execute().unwrap()
-    }
-}
-
-impl From<Entity> for ListEntry {
-    fn from(value: Entity) -> Self {
-        match &value {
-            Entity::Application(_) => ListEntry {
-                entity: Arc::new(value),
-            },
-            Entity::Command(_) => ListEntry {
-                entity: Arc::new(value),
-            },
-        }
-    }
 }
 
 impl Prism {
@@ -160,10 +124,10 @@ impl Prism {
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
-        let search_section = component::search_bar(&self.query, PrismEvent::SearchInput);
+        let search_section = widgets::search_bar(&self.query, PrismEvent::SearchInput);
 
         let list_section = self.entries.iter().enumerate().map(|(i, entry)| {
-            component::list_item(
+            widgets::list_item(
                 entry,
                 i == self.selected_index,
                 PrismEvent::EntrySelected(i),
@@ -172,7 +136,7 @@ impl Prism {
 
         container(column![
             search_section,
-            component::divider(),
+            widgets::divider(),
             scrollable(column(list_section))
         ])
         .width(Length::Fill)
