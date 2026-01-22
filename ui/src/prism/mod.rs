@@ -82,8 +82,15 @@ impl Prism {
             PrismEvent::EntrySelected(index) => {
                 self.selected_index = index;
                 if let Some(entry) = self.all_entries.get(index) {
-                    entry.execute();
-                    println!("Selected: {}", entry.name());
+                    match entry.entity.execute() {
+                        Ok(_) => {
+                            println!("Launched: {}", entry.entity.name());
+                            return iced::exit();
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to launch: {}", e);
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -92,7 +99,7 @@ impl Prism {
                     match entry.entity.execute() {
                         Ok(_) => {
                             println!("Launched: {}", entry.entity.name());
-                            return iced::window::latest().and_then(iced::window::close);
+                            return iced::exit();
                         }
                         Err(e) => {
                             eprintln!("Failed to launch: {}", e);
