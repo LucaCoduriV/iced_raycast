@@ -1,6 +1,8 @@
 use core::Entity;
 use std::sync::Arc;
 
+use anyhow::Result;
+
 #[derive(Clone, Debug)]
 pub struct ListEntry {
     pub entity: Arc<Entity>,
@@ -22,8 +24,8 @@ impl ListEntry {
         }
     }
 
-    pub fn execute(&self) {
-        self.entity.execute().unwrap()
+    pub fn execute(&self) -> Result<()> {
+        self.entity.execute()
     }
 }
 

@@ -96,7 +96,7 @@ impl Prism {
             }
             PrismEvent::Submit => {
                 if let Some(entry) = self.all_entries.get(self.selected_index) {
-                    match entry.entity.execute() {
+                    match entry.execute() {
                         Ok(_) => {
                             println!("Launched: {}", entry.entity.name());
                             return iced::exit();
