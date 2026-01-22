@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Background, Color, Element, Length, gradient,
-    widget::{button, column, container, image, row, space::horizontal, text, text_input},
+    widget::{Id, button, column, container, image, row, space::horizontal, text, text_input},
 };
 
 use crate::{
@@ -13,6 +13,7 @@ use crate::{
 
 /// A specialized search input with transparent styling
 pub fn search_bar<'a, Message>(
+    id: Id,
     query: &'a str,
     on_input: impl Fn(String) -> Message + 'a,
 ) -> Element<'a, Message>
@@ -21,6 +22,7 @@ where
 {
     text_input("Search for apps and commands...", query)
         .on_input(on_input)
+        .id(id)
         .size(typo::TITLE_L.0)
         .font(typo::TITLE_L.2)
         .padding(15)

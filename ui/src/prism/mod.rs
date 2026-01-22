@@ -5,7 +5,7 @@ use core::{get_entities, search::SearchEngine};
 
 use iced::{
     Element, Length, Subscription, Task, event, keyboard,
-    widget::{column, container, scrollable},
+    widget::{Id, column, container, operation::focus, scrollable, text_input},
 };
 
 use crate::{
@@ -13,16 +13,17 @@ use crate::{
     prism::items::ListEntry,
 };
 
-#[derive(Default)]
 pub struct Prism {
     query: String,
     all_entries: Vec<ListEntry>,
     entries: Vec<ListEntry>,
     selected_index: usize,
+    search_id: Id,
 }
 
 #[derive(Debug, Clone)]
 pub enum PrismEvent {
+    Initialized,
     SearchInput(String),
     SelectNext,
     SelectPrevious,
@@ -33,22 +34,30 @@ pub enum PrismEvent {
 
 impl Prism {
     pub fn new() -> (Self, Task<PrismEvent>) {
+        let search_id = iced::widget::Id::unique();
+
         let state = Prism {
             query: "".to_string(),
             all_entries: Vec::new(),
             entries: Vec::new(),
             selected_index: 0,
+            search_id: search_id.clone(),
         };
+
         let load_task = Task::perform(
             async { get_entities().into_iter().map(From::from).collect() },
             PrismEvent::EntriesLoaded,
         );
+        let init_task = Task::perform(async {}, |_| PrismEvent::Initialized);
 
-        (state, load_task)
+        let task = Task::batch(vec![load_task, init_task]);
+
+        (state, task)
     }
 
     pub fn update(&mut self, message: PrismEvent) -> Task<PrismEvent> {
         match message {
+            PrismEvent::Initialized => focus(self.search_id.clone()),
             PrismEvent::EntriesLoaded(mut loaded_entries) => {
                 loaded_entries.sort_by(|a, b| SearchEngine::compare(&a.entity, &b.entity));
 
@@ -70,8 +79,8 @@ impl Prism {
                 Task::none()
             }
             PrismEvent::SelectNext => {
-                if !self.all_entries.is_empty() {
-                    self.selected_index = (self.selected_index + 1).min(self.all_entries.len() - 1);
+                if !self.entries.is_empty() {
+                    self.selected_index = (self.selected_index + 1).min(self.entries.len() - 1);
                 }
                 Task::none()
             }
@@ -81,34 +90,33 @@ impl Prism {
             }
             PrismEvent::EntrySelected(index) => {
                 self.selected_index = index;
-                if let Some(entry) = self.all_entries.get(index) {
-                    match entry.entity.execute() {
-                        Ok(_) => {
-                            println!("Launched: {}", entry.entity.name());
-                            return iced::exit();
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to launch: {}", e);
-                        }
-                    }
+                if let Some(value) = self.execute_selected_entry(index) {
+                    return value;
                 }
                 Task::none()
             }
             PrismEvent::Submit => {
-                if let Some(entry) = self.all_entries.get(self.selected_index) {
-                    match entry.execute() {
-                        Ok(_) => {
-                            println!("Launched: {}", entry.entity.name());
-                            return iced::exit();
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to launch: {}", e);
-                        }
-                    }
+                if let Some(value) = self.execute_selected_entry(self.selected_index) {
+                    return value;
                 }
                 Task::none()
             }
         }
+    }
+
+    fn execute_selected_entry(&mut self, index: usize) -> Option<Task<PrismEvent>> {
+        if let Some(entry) = self.entries.get(index) {
+            match entry.entity.execute() {
+                Ok(_) => {
+                    println!("Launched: {}", entry.entity.name());
+                    return Some(iced::exit());
+                }
+                Err(e) => {
+                    eprintln!("Failed to launch: {}", e);
+                }
+            }
+        }
+        None
     }
 
     pub fn subscription(&self) -> Subscription<PrismEvent> {
@@ -131,7 +139,8 @@ impl Prism {
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
-        let search_section = widgets::search_bar(&self.query, PrismEvent::SearchInput);
+        let search_section =
+            widgets::search_bar(self.search_id.clone(), &self.query, PrismEvent::SearchInput);
 
         let list_section = self.entries.iter().enumerate().map(|(i, entry)| {
             widgets::list_item(
