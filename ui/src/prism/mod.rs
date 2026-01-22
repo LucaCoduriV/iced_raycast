@@ -30,6 +30,7 @@ pub enum PrismEvent {
     EntrySelected(usize),
     Submit,
     EntriesLoaded(Vec<ListEntry>),
+    Exit,
 }
 
 impl Prism {
@@ -101,6 +102,7 @@ impl Prism {
                 }
                 Task::none()
             }
+            PrismEvent::Exit => iced::exit(),
         }
     }
 
@@ -130,6 +132,7 @@ impl Prism {
                         Some(PrismEvent::SelectNext)
                     }
                     keyboard::Key::Named(keyboard::key::Named::Enter) => Some(PrismEvent::Submit),
+                    keyboard::Key::Named(keyboard::key::Named::Escape) => Some(PrismEvent::Exit),
                     _ => None,
                 }
             } else {
