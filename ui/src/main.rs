@@ -16,7 +16,7 @@ pub fn main() -> Result<(), iced_layershell::Error> {
     use iced_layershell::settings::{LayerShellSettings, Settings};
 
     application(
-        Raycast::default,
+        Raycast::new,
         Raycast::namespace,
         Raycast::update,
         Raycast::view,

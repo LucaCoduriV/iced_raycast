@@ -7,15 +7,15 @@ pub struct Raycast {
     prism: Prism,
 }
 
-impl Default for Raycast {
-    fn default() -> Self {
-        Self {
-            prism: Prism::new_placeholder(),
-        }
-    }
-}
-
 impl Raycast {
+    pub fn new() -> (Raycast, Task<Message>) {
+        let (prism, prism_task) = Prism::new();
+
+        let state = Raycast { prism };
+
+        (state, prism_task.map(Message::PrismEvent))
+    }
+
     pub fn namespace() -> String {
         String::from("RaycastClone")
     }

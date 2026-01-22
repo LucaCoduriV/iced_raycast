@@ -1,5 +1,8 @@
 mod component;
 
+use core::{Application, Entity, get_entities};
+use std::sync::Arc;
+
 use iced::{
     Element, Length, Subscription, Task, event, keyboard,
     widget::{column, container, scrollable},
@@ -10,7 +13,7 @@ use crate::design_system::{colors, spacing};
 #[derive(Default)]
 pub struct Prism {
     query: String,
-    entries: Vec<ListEntry>,
+    all_entries: Vec<ListEntry>,
     selected_index: usize,
 }
 
@@ -21,9 +24,10 @@ pub enum PrismEvent {
     SelectPrevious,
     EntrySelected(usize),
     Submit,
+    EntriesLoaded(Vec<ListEntry>),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ListEntryKind {
     Command,
     Application,
@@ -38,52 +42,85 @@ impl From<ListEntryKind> for &str {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct ListEntry {
-    name: String,
-    description: String,
-    kind: ListEntryKind,
+    entity: Arc<Entity>,
+}
+
+impl ListEntry {
+    fn name(&self) -> &str {
+        match self.entity.as_ref() {
+            Entity::Application(application) => application.name(),
+            Entity::Command(command_entity) => todo!(),
+        }
+    }
+
+    fn description(&self) -> Option<&str> {
+        match self.entity.as_ref() {
+            Entity::Application(application) => application.description(),
+            Entity::Command(command_entity) => todo!(),
+        }
+    }
+
+    fn kind(&self) -> &str {
+        match self.entity.as_ref() {
+            Entity::Application(_) => "Application",
+            Entity::Command(_) => "Command",
+        }
+    }
+
+    fn execute(&self) {
+        match self.entity.as_ref() {
+            Entity::Application(application) => application.execute(None).unwrap(),
+            Entity::Command(_command_entity) => todo!(),
+        }
+    }
+}
+
+impl From<Entity> for ListEntry {
+    fn from(value: Entity) -> Self {
+        match &value {
+            Entity::Application(_) => ListEntry {
+                entity: Arc::new(value),
+            },
+            Entity::Command(_) => ListEntry {
+                entity: Arc::new(value),
+            },
+        }
+    }
+}
+
+fn get_list_entries() -> Vec<ListEntry> {
+    get_entities().into_iter().map(From::from).collect()
 }
 
 impl Prism {
-    pub fn new_placeholder() -> Self {
-        Prism {
-            query: "".into(),
+    pub fn new() -> (Self, Task<PrismEvent>) {
+        let state = Prism {
+            query: "".to_string(),
+            all_entries: Vec::new(),
             selected_index: 0,
-            entries: vec![
-                ListEntry {
-                    name: "Firefox".into(),
-                    description: "Browser".into(),
-                    kind: ListEntryKind::Application,
-                },
-                ListEntry {
-                    name: "Chrome".into(),
-                    description: "Browser".into(),
-                    kind: ListEntryKind::Application,
-                },
-                ListEntry {
-                    name: "Vivaldi".into(),
-                    description: "Browser".into(),
-                    kind: ListEntryKind::Application,
-                },
-                ListEntry {
-                    name: "Zen Browser".into(),
-                    description: "Browser".into(),
-                    kind: ListEntryKind::Application,
-                },
-            ],
-        }
+        };
+        let load_task = Task::perform(async { get_list_entries() }, PrismEvent::EntriesLoaded);
+
+        (state, load_task)
     }
 
     pub fn update(&mut self, message: PrismEvent) -> Task<PrismEvent> {
         match message {
+            PrismEvent::EntriesLoaded(mut loaded_entries) => {
+                loaded_entries.sort_by_key(|a| a.name().to_lowercase());
+                self.all_entries = loaded_entries;
+                Task::none()
+            }
             PrismEvent::SearchInput(query) => {
                 self.query = query;
                 self.selected_index = 0;
                 Task::none()
             }
             PrismEvent::SelectNext => {
-                if !self.entries.is_empty() {
-                    self.selected_index = (self.selected_index + 1).min(self.entries.len() - 1);
+                if !self.all_entries.is_empty() {
+                    self.selected_index = (self.selected_index + 1).min(self.all_entries.len() - 1);
                 }
                 Task::none()
             }
@@ -93,12 +130,16 @@ impl Prism {
             }
             PrismEvent::EntrySelected(index) => {
                 self.selected_index = index;
-                println!("Selected: {}", self.entries[index].name);
+                if let Some(entry) = self.all_entries.get(index) {
+                    entry.execute();
+                    println!("Selected: {}", entry.name());
+                }
                 Task::none()
             }
             PrismEvent::Submit => {
-                if let Some(entry) = self.entries.get(self.selected_index) {
-                    println!("Launched via Enter: {}", entry.name);
+                if let Some(entry) = self.all_entries.get(self.selected_index) {
+                    entry.execute();
+                    println!("Launched via Enter: {}", entry.name());
                 }
                 Task::none()
             }
@@ -127,7 +168,7 @@ impl Prism {
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
         let search_section = component::search_bar(&self.query, PrismEvent::SearchInput);
 
-        let list_section = self.entries.iter().enumerate().map(|(i, entry)| {
+        let list_section = self.all_entries.iter().enumerate().map(|(i, entry)| {
             component::list_item(
                 entry,
                 i == self.selected_index,

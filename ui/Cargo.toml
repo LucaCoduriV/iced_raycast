@@ -1,0 +1,11 @@
+[package]
+name = "iced_raycast"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { version = "0.14", features = ["canvas", "image", "wgpu", "advanced"] }
+core = { path = "../core/" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+iced_layershell = "0.14"

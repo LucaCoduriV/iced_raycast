@@ -67,17 +67,17 @@ pub fn list_item<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let kind: &str = entry.kind.into();
+    let kind: &str = entry.kind();
 
     let content = row![
         image("assets/icon_placeholder.png")
             .width(icons::LG)
             .height(icons::LG),
         column![
-            text(&entry.name)
+            text(entry.name())
                 .typography(typo::TITLE_M)
                 .color(colors::ON_SURFACE),
-            text(&entry.description)
+            text(entry.description().unwrap_or(""))
                 .typography(typo::BODY_S)
                 .color(colors::ON_SURFACE_VARIANT),
         ]

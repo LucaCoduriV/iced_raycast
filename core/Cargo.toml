@@ -1,0 +1,19 @@
+[package]
+name = "core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+directories = "6.0.0"
+walkdir = "2.5.0"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+rayon = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+freedesktop-desktop-entry = "0.8.1"
+freedesktop-icons-greedy = "0.2.6"
+which = "8.0.0"

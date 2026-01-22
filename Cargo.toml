@@ -1,10 +1,10 @@
-[package]
-name = "iced_raycast"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
 
-[dependencies]
-iced = { version = "0.14", features = ["canvas", "image", "wgpu", "advanced"] }
+members = ["core", "ui"]
+default-members = ["ui"]
 
-[target.'cfg(target_os = "linux")'.dependencies]
-iced_layershell = "0.14"
+[workspace.dependencies]
+thiserror = "2.0"
+anyhow = "1.0"
+rayon = "1.11"
