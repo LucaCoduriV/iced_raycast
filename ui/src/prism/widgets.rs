@@ -72,9 +72,7 @@ where
     let kind: &str = entry.kind();
 
     let content = row![
-        image("assets/icon_placeholder.png")
-            .width(icons::LG)
-            .height(icons::LG),
+        image(entry.icon()).width(icons::LG).height(icons::LG),
         column![
             text(entry.name())
                 .typography(typo::TITLE_M)

@@ -5,7 +5,7 @@ use core::{get_entities, search::SearchEngine};
 
 use iced::{
     Element, Length, Subscription, Task, event, keyboard,
-    widget::{Id, column, container, operation::focus, scrollable, text_input},
+    widget::{Id, column, container, operation::focus, scrollable},
 };
 
 use crate::{
@@ -108,9 +108,9 @@ impl Prism {
 
     fn execute_selected_entry(&mut self, index: usize) -> Option<Task<PrismEvent>> {
         if let Some(entry) = self.entries.get(index) {
-            match entry.entity.execute() {
+            match entry.execute() {
                 Ok(_) => {
-                    println!("Launched: {}", entry.entity.name());
+                    println!("Launched: {}", entry.name());
                     return Some(iced::exit());
                 }
                 Err(e) => {

@@ -2,6 +2,7 @@ use core::Entity;
 use std::sync::Arc;
 
 use anyhow::Result;
+use iced::widget::image;
 
 #[derive(Clone, Debug)]
 pub struct ListEntry {
@@ -21,6 +22,17 @@ impl ListEntry {
         match self.entity.as_ref() {
             Entity::Application(_) => "Application",
             Entity::Command(_) => "Command",
+        }
+    }
+
+    pub fn icon(&self) -> image::Handle {
+        match self
+            .entity
+            .icon()
+            .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
+        {
+            core::Image::Data(bytes) => image::Handle::from_bytes(bytes.clone()),
+            core::Image::Path(path) => image::Handle::from_path(path),
         }
     }
 
