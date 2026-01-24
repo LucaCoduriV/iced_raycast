@@ -4,7 +4,6 @@ use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct MacOSApplication {
-    // Wrap the crate's info struct
     inner: AppInfo,
 }
 
@@ -13,7 +12,6 @@ impl Application for MacOSApplication {
     where
         Self: Sized,
     {
-        // 64 is a standard icon size for launchers
         get_installed_apps(64)
             .unwrap_or_default()
             .into_iter()
@@ -26,8 +24,6 @@ impl Application for MacOSApplication {
     }
 
     fn alias(&self) -> Option<&str> {
-        // app_info doesn't explicitly provide aliases,
-        // but you could return the name again or None
         None
     }
 
@@ -44,7 +40,6 @@ impl Application for MacOSApplication {
             let mut png_bytes: Vec<u8> = Vec::new();
             let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
 
-            // Encode the raw RGBA pixels from app_info into a PNG format
             let _ = image::ImageEncoder::write_image(
                 encoder,
                 &icon_data.pixels,
@@ -58,8 +53,6 @@ impl Application for MacOSApplication {
     }
 
     fn execute(&self, arg: Option<&str>) -> anyhow::Result<()> {
-        // On macOS, the best way to launch a .app bundle is via the 'open' command
-        // This handles focus and instance management correctly.
         let mut cmd = Command::new("open");
 
         cmd.arg("-a").arg(&self.inner.path);

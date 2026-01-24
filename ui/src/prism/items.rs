@@ -7,6 +7,7 @@ use iced::widget::image;
 #[derive(Clone, Debug)]
 pub struct ListEntry {
     pub entity: Arc<Entity>,
+    image_handler: image::Handle,
 }
 
 impl ListEntry {
@@ -26,14 +27,7 @@ impl ListEntry {
     }
 
     pub fn icon(&self) -> image::Handle {
-        match self
-            .entity
-            .icon()
-            .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
-        {
-            core::Image::Data(bytes) => image::Handle::from_bytes(bytes.clone()),
-            core::Image::Path(path) => image::Handle::from_path(path),
-        }
+        self.image_handler.clone()
     }
 
     pub fn execute(&self) -> Result<()> {
@@ -43,12 +37,21 @@ impl ListEntry {
 
 impl From<Entity> for ListEntry {
     fn from(value: Entity) -> Self {
+        let image_handler = match value
+            .icon()
+            .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
+        {
+            core::Image::Data(bytes) => image::Handle::from_bytes(bytes.clone()),
+            core::Image::Path(path) => image::Handle::from_path(path),
+        };
         match &value {
             Entity::Application(_) => ListEntry {
                 entity: Arc::new(value),
+                image_handler,
             },
             Entity::Command(_) => ListEntry {
                 entity: Arc::new(value),
+                image_handler,
             },
         }
     }
