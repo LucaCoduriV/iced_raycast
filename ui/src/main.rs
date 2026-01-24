@@ -5,8 +5,30 @@ mod design_system;
 mod prism;
 
 #[cfg(not(target_os = "linux"))]
-pub fn main() -> Result<(), Error> {
-    iced::run(Raycast::update, Raycast::view)
+pub fn main() -> iced::Result {
+    use iced::{Size, advanced::graphics::core::window};
+
+    iced::application(Raycast::new, Raycast::update, Raycast::view)
+        .style(Raycast::style)
+        .font(include_bytes!("../fonts/Roboto-Regular.ttf").as_slice())
+        .font(include_bytes!("../fonts/Roboto-Medium.ttf").as_slice())
+        .font(include_bytes!("../fonts/RobotoMono-Regular.ttf").as_slice())
+        .subscription(Raycast::subscription)
+        .window(window::Settings {
+            size: Size {
+                width: 700.,
+                height: 500.,
+            },
+            resizable: false,
+            closeable: false,
+            minimizable: false,
+            decorations: false,
+            transparent: true,
+            blur: true,
+            level: window::Level::AlwaysOnTop,
+            ..window::Settings::default()
+        })
+        .run()
 }
 
 #[cfg(target_os = "linux")]
