@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Background, Color, Element, Length, gradient,
-    widget::{Id, button, column, container, image, row, space::horizontal, text, text_input},
+    widget::{Id, button, column, container, image, row, space::horizontal, svg, text, text_input},
 };
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
         colors, icons, spacing,
         typo::{self, Typography},
     },
-    prism::ListEntry,
+    prism::{ListEntry, items::IconHandle},
 };
 
 /// A specialized search input with transparent styling
@@ -72,7 +72,7 @@ where
     let kind: &str = entry.kind();
 
     let content = row![
-        image(entry.icon()).width(icons::LG).height(icons::LG),
+        render_icon(entry.icon(), icons::LG),
         column![
             text(entry.name())
                 .typography(typo::TITLE_M)
@@ -115,4 +115,17 @@ where
             }
         })
         .into()
+}
+
+pub fn render_icon<'a, Message>(icon_handler: IconHandle, size: f32) -> Element<'a, Message> {
+    match icon_handler {
+        IconHandle::SVG(handle) => svg(handle)
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .into(),
+        IconHandle::OTHER(handle) => image(handle)
+            .width(Length::Fixed(size))
+            .height(Length::Fixed(size))
+            .into(),
+    }
 }

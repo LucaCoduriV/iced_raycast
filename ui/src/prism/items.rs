@@ -1,13 +1,16 @@
 use core::Entity;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
-use iced::widget::image;
+use iced::{
+    Length,
+    widget::{image, svg},
+};
 
 #[derive(Clone, Debug)]
 pub struct ListEntry {
     pub entity: Arc<Entity>,
-    image_handler: image::Handle,
+    image_handler: IconHandle,
 }
 
 impl ListEntry {
@@ -26,7 +29,7 @@ impl ListEntry {
         }
     }
 
-    pub fn icon(&self) -> image::Handle {
+    pub fn icon(&self) -> IconHandle {
         self.image_handler.clone()
     }
 
@@ -41,9 +44,16 @@ impl From<Entity> for ListEntry {
             .icon()
             .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
         {
-            core::Image::Data(bytes) => image::Handle::from_bytes(bytes.clone()),
-            core::Image::Path(path) => image::Handle::from_path(path),
+            core::Image::Data(bytes) => IconHandle::OTHER(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Path(path) => {
+                let path_obj = Path::new(&path);
+                match path_obj.extension().and_then(|s| s.to_str()) {
+                    Some("svg") => IconHandle::SVG(svg::Handle::from_path(path_obj)),
+                    _ => IconHandle::OTHER(image::Handle::from_path(path_obj)),
+                }
+            }
         };
+
         match &value {
             Entity::Application(_) => ListEntry {
                 entity: Arc::new(value),
@@ -55,4 +65,10 @@ impl From<Entity> for ListEntry {
             },
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum IconHandle {
+    SVG(svg::Handle),
+    OTHER(image::Handle),
 }

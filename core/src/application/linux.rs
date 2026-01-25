@@ -99,6 +99,7 @@ impl LinuxApplication {
             .unwrap_or_else(|| "Unknown".to_string());
 
         let icon_path = entry.icon().and_then(find_icon);
+        println!("{icon_path:?}");
         Some(LinuxApplication {
             name,
             exec,

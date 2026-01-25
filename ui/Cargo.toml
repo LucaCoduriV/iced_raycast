@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14", features = ["canvas", "image", "wgpu", "advanced"] }
+iced = { version = "0.14", features = [
+  "canvas",
+  "image",
+  "wgpu",
+  "advanced",
+  "svg",
+] }
 core = { path = "../core/" }
 anyhow = { workspace = true }
 
