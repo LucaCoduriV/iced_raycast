@@ -119,11 +119,11 @@ where
 
 pub fn render_icon<'a, Message>(icon_handler: IconHandle, size: f32) -> Element<'a, Message> {
     match icon_handler {
-        IconHandle::SVG(handle) => svg(handle)
+        IconHandle::Svg(handle) => svg(handle)
             .width(Length::Fixed(size))
             .height(Length::Fixed(size))
             .into(),
-        IconHandle::OTHER(handle) => image(handle)
+        IconHandle::Other(handle) => image(handle)
             .width(Length::Fixed(size))
             .height(Length::Fixed(size))
             .into(),

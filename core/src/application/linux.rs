@@ -98,8 +98,11 @@ impl LinuxApplication {
             .map(|cow| cow.into_owned())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let icon_path = entry.icon().and_then(find_icon);
-        println!("{icon_path:?}");
+        let icon_path = entry.icon().and_then(find_icon).or_else(|| {
+            println!("{} | {:?}", name, entry.icon());
+            None
+        });
+
         Some(LinuxApplication {
             name,
             exec,
@@ -125,7 +128,6 @@ fn find_icon(icon_name: &str) -> Option<String> {
     // Try to get the current system theme, or fallback to hicolor
     lookup(icon_name)
         .with_cache()
-        .with_size(48) // Usually a good middle ground
         .with_greed() // Allows picking different sizes if 48 isn't found
         .find()
         .or_else(|| {

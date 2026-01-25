@@ -44,12 +44,12 @@ impl From<Entity> for ListEntry {
             .icon()
             .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
         {
-            core::Image::Data(bytes) => IconHandle::OTHER(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Data(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes.clone())),
             core::Image::Path(path) => {
                 let path_obj = Path::new(&path);
                 match path_obj.extension().and_then(|s| s.to_str()) {
-                    Some("svg") => IconHandle::SVG(svg::Handle::from_path(path_obj)),
-                    _ => IconHandle::OTHER(image::Handle::from_path(path_obj)),
+                    Some("svg") => IconHandle::Svg(svg::Handle::from_path(path_obj)),
+                    _ => IconHandle::Other(image::Handle::from_path(path_obj)),
                 }
             }
         };
@@ -69,6 +69,6 @@ impl From<Entity> for ListEntry {
 
 #[derive(Clone, Debug)]
 pub enum IconHandle {
-    SVG(svg::Handle),
-    OTHER(image::Handle),
+    Svg(svg::Handle),
+    Other(image::Handle),
 }
