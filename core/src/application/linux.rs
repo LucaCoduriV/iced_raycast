@@ -1,12 +1,14 @@
 use std::{
     ffi::OsStr,
     os::unix::process::CommandExt,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use anyhow::{Context, Result};
 use freedesktop_desktop_entry::{DesktopEntry, desktop_entries, get_languages_from_env};
+use freedesktop_icon::IconTheme;
+use freedesktop_icons_greedy::lookup;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use which::which;
 
@@ -96,13 +98,45 @@ impl LinuxApplication {
             .map(|cow| cow.into_owned())
             .unwrap_or_else(|| "Unknown".to_string());
 
+        let icon_path = entry.icon().and_then(find_icon);
         Some(LinuxApplication {
             name,
             exec,
-            icon_path: entry.icon().map(String::from),
+            icon_path,
             is_terminal: entry.terminal(),
         })
     }
+}
+
+fn find_icon(icon_name: &str) -> Option<String> {
+    let path = Path::new(icon_name);
+
+    // 1. Check if it's an absolute path that exists
+    if path.is_absolute() {
+        return if path.exists() {
+            Some(icon_name.to_string())
+        } else {
+            None
+        };
+    }
+
+    // 2. Try to find the icon using the theme specification
+    // Try to get the current system theme, or fallback to hicolor
+    lookup(icon_name)
+        .with_cache()
+        .with_size(48) // Usually a good middle ground
+        .with_greed() // Allows picking different sizes if 48 isn't found
+        .find()
+        .or_else(|| {
+            // 3. Fallback: Manual check in pixmaps if it's a simple filename
+            let pixmap_path = Path::new("/usr/share/pixmaps").join(icon_name);
+            if pixmap_path.exists() {
+                Some(pixmap_path)
+            } else {
+                None
+            }
+        })
+        .and_then(|p| p.into_os_string().into_string().ok())
 }
 
 impl Application for LinuxApplication {
