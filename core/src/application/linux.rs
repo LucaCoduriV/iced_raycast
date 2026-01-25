@@ -1,14 +1,12 @@
 use std::{
     ffi::OsStr,
     os::unix::process::CommandExt,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
 };
 
 use anyhow::{Context, Result};
 use freedesktop_desktop_entry::{DesktopEntry, desktop_entries, get_languages_from_env};
-use freedesktop_icon::IconTheme;
-use freedesktop_icons_greedy::lookup;
 use linicon::lookup_icon;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use which::which;
@@ -46,19 +44,6 @@ static TERMINALS: [TerminalProfile; 6] = [
         flag: "--",
     },
 ];
-
-static IMAGE_FORMATS: [&str; 7] = [".png", ".svg", ".jpg", ".jpeg", ".jfif", ".pjpeg", ".pjp"];
-
-fn is_image(path: &str) -> bool {
-    let path = Path::new(path);
-    path.extension()
-        .and_then(OsStr::to_str)
-        .map(|ext| {
-            let ext = ext.to_lowercase();
-            IMAGE_FORMATS.contains(&ext.as_str())
-        })
-        .unwrap_or(false)
-}
 
 fn get_terminal() -> Option<&'static TerminalProfile> {
     TERMINALS.iter().find(|t| which(t.exe).is_ok())
@@ -116,22 +101,46 @@ impl LinuxApplication {
 fn find_icon(icon_name: &str) -> Option<String> {
     let path = Path::new(icon_name);
 
-    // 1. Check if it's an absolute path that exists
     if path.is_absolute() {
-        return if path.exists() {
-            Some(icon_name.to_string())
+        if path.exists() {
+            return Some(icon_name.to_string());
         } else {
-            None
-        };
+            let stem = path.file_stem()?.to_str()?;
+            return find_icon(stem);
+        }
     }
 
-    let icons: Vec<_> = lookup_icon(icon_name)
+    let found_by_theme = lookup_icon(icon_name)
         .use_fallback_themes(true)
-        .filter_map(|e| e.map(|x| x.path.into_os_string().into_string()).ok())
         .filter_map(|e| e.ok())
-        .collect();
+        .filter_map(|x| x.path.into_os_string().into_string().ok())
+        .next();
 
-    icons.first().map(|i| i.to_string())
+    if let Some(path) = found_by_theme {
+        return Some(path);
+    }
+
+    let fallback_dirs = [
+        "/usr/share/pixmaps",
+        "/usr/share/icons",
+        "/usr/share/icons/hicolor/48x48/apps",
+        "/usr/share/icons/hicolor/scalable/apps",
+    ];
+
+    let extensions = ["", ".png", ".svg", ".xpm", ".ico"];
+
+    for dir in fallback_dirs {
+        for ext in extensions {
+            let mut candidate = std::path::PathBuf::from(dir);
+            candidate.push(format!("{}{}", icon_name, ext));
+
+            if candidate.exists() {
+                return candidate.into_os_string().into_string().ok();
+            }
+        }
+    }
+
+    None
 }
 
 impl Application for LinuxApplication {
