@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use freedesktop_desktop_entry::{DesktopEntry, desktop_entries, get_languages_from_env};
 use freedesktop_icon::IconTheme;
 use freedesktop_icons_greedy::lookup;
+use linicon::lookup_icon;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use which::which;
 
@@ -124,22 +125,13 @@ fn find_icon(icon_name: &str) -> Option<String> {
         };
     }
 
-    // 2. Try to find the icon using the theme specification
-    // Try to get the current system theme, or fallback to hicolor
-    lookup(icon_name)
-        .with_cache()
-        .with_greed() // Allows picking different sizes if 48 isn't found
-        .find()
-        .or_else(|| {
-            // 3. Fallback: Manual check in pixmaps if it's a simple filename
-            let pixmap_path = Path::new("/usr/share/pixmaps").join(icon_name);
-            if pixmap_path.exists() {
-                Some(pixmap_path)
-            } else {
-                None
-            }
-        })
-        .and_then(|p| p.into_os_string().into_string().ok())
+    let icons: Vec<_> = lookup_icon(icon_name)
+        .use_fallback_themes(true)
+        .filter_map(|e| e.map(|x| x.path.into_os_string().into_string()).ok())
+        .filter_map(|e| e.ok())
+        .collect();
+
+    icons.first().map(|i| i.to_string())
 }
 
 impl Application for LinuxApplication {
