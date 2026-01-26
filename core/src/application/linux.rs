@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsStr,
     os::unix::process::CommandExt,
     path::Path,
     process::{Command, Stdio},

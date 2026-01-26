@@ -10,6 +10,7 @@ iced = { version = "0.14", features = [
   "wgpu",
   "advanced",
   "svg",
+  "selector",
 ] }
 core = { path = "../core/" }
 anyhow = { workspace = true }
