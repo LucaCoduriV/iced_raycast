@@ -5,7 +5,7 @@ use core::{get_entities, search::SearchEngine};
 use std::collections::HashMap;
 
 use iced::{
-    Element, Length, Rectangle, Subscription, Task,
+    Element, Length, Rectangle, Size, Subscription, Task,
     advanced::widget::{operate, operation},
     event, keyboard,
     widget::{
@@ -60,7 +60,6 @@ pub enum PrismEvent {
     EntriesLoaded(Vec<ListEntry>),
     Exit,
     Scrolled(scrollable::Viewport),
-    // Update the cache when a measurement finishes
     ItemMeasured { id: Id, rect: Rectangle },
 }
 
@@ -79,7 +78,7 @@ impl Prism {
             viewport_height: 0.0,
             current_scroll_offset: 0.0,
             height_cache: HashMap::new(),
-            default_row_height: 54.0, // A reasonable guess for start-up
+            default_row_height: 54.0,
         };
 
         let load_task = Task::perform(
@@ -111,11 +110,8 @@ impl Prism {
                 self.all_entries = wrapped_entries.clone();
                 self.entries = wrapped_entries;
 
-                // On load, measure the first item to calibrate our default height
-                if let Some(first) = self.entries.first() {
-                    return self.measure_item(first.id.clone());
-                }
-                Task::none()
+                // Measure every item in the list immediately upon loading
+                self.measure_all_visible_items()
             }
 
             PrismEvent::SearchInput(query) => {
@@ -128,37 +124,31 @@ impl Prism {
                     .cloned()
                     .collect();
 
-                scroll_to(
-                    self.scroll_id.clone(),
-                    scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
-                )
+                Task::batch(vec![
+                    scroll_to(
+                        self.scroll_id.clone(),
+                        scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+                    ),
+                    self.measure_all_visible_items(),
+                ])
             }
 
             PrismEvent::SelectNext => {
                 if !self.entries.is_empty() {
                     self.selected_index = (self.selected_index + 1).min(self.entries.len() - 1);
-                    // 1. Scroll immediately based on cache (Fast)
-                    let scroll_cmd = self.smart_scroll();
-                    // 2. Measure the new item in background to keep cache accurate (Runtime)
-                    let measure_cmd = self.measure_current_selection();
-
-                    return Task::batch(vec![scroll_cmd, measure_cmd]);
+                    return self.smart_scroll();
                 }
                 Task::none()
             }
 
             PrismEvent::SelectPrevious => {
                 self.selected_index = self.selected_index.saturating_sub(1);
-                let scroll_cmd = self.smart_scroll();
-                let measure_cmd = self.measure_current_selection();
-                Task::batch(vec![scroll_cmd, measure_cmd])
+                self.smart_scroll()
             }
 
             PrismEvent::ItemMeasured { id, rect } => {
-                // Update the cache with the real runtime height
                 if rect.height > 0.0 {
                     self.height_cache.insert(id, rect.height);
-                    // Update fallback height to match the most recently seen item
                     self.default_row_height = rect.height;
                 }
                 Task::none()
@@ -183,6 +173,31 @@ impl Prism {
         }
     }
 
+    fn measure_all_visible_items(&self) -> Task<PrismEvent> {
+        let tasks: Vec<Task<PrismEvent>> = self
+            .entries
+            .iter()
+            .map(|entry| self.measure_item(entry.id.clone()))
+            .collect();
+
+        Task::batch(tasks)
+    }
+
+    fn measure_item(&self, id: Id) -> Task<PrismEvent> {
+        let selector = selector::id(id.clone()).find();
+        let operation = operation::map(selector, move |v| {
+            v.map(|widget| PrismEvent::ItemMeasured {
+                id: id.clone(),
+                rect: widget.bounds(),
+            })
+            .unwrap_or(PrismEvent::ItemMeasured {
+                id: id.clone(),
+                rect: Rectangle::with_size(Size::new(0.0, 0.0)),
+            })
+        });
+        operate(operation)
+    }
+
     fn smart_scroll(&self) -> Task<PrismEvent> {
         let mut y_position = 0.0;
         let mut target_height = self.default_row_height;
@@ -203,9 +218,6 @@ impl Prism {
                 .get(&entry.id)
                 .unwrap_or(&self.default_row_height);
         }
-
-        let spacing = 0.0;
-        y_position += spacing * (self.selected_index as f32);
 
         let item_top = y_position;
         let item_bottom = item_top + target_height;
@@ -232,26 +244,6 @@ impl Prism {
         }
 
         Task::none()
-    }
-
-    fn measure_current_selection(&self) -> Task<PrismEvent> {
-        if let Some(entry) = self.entries.get(self.selected_index) {
-            // Only measure if we don't have it cached yet,
-            // OR if you suspect variable content might change height often
-            if !self.height_cache.contains_key(&entry.id) {
-                return self.measure_item(entry.id.clone());
-            }
-        }
-        Task::none()
-    }
-
-    fn measure_item(&self, id: Id) -> Task<PrismEvent> {
-        let selector = selector::id(id.clone()).find();
-        let operation = operation::map(selector, move |v| PrismEvent::ItemMeasured {
-            id: id.clone(),
-            rect: v.unwrap().bounds(),
-        });
-        operate(operation)
     }
 
     fn execute_selected_entry(&mut self, index: usize) -> Option<Task<PrismEvent>> {
