@@ -1,3 +1,5 @@
+use core::AppState;
+
 use iced::{Color, Element, Event, Task, event, widget::container};
 #[cfg(target_os = "linux")]
 use iced_layershell::to_layer_message;
@@ -6,13 +8,17 @@ use crate::prism::{Prism, PrismEvent};
 
 pub struct Raycast {
     prism: Prism,
+    app_state: AppState,
 }
 
 impl Raycast {
     pub fn new() -> (Raycast, Task<Message>) {
         let (prism, prism_task) = Prism::new();
 
-        let state = Raycast { prism };
+        let state = Raycast {
+            prism,
+            app_state: AppState::load(),
+        };
 
         (state, prism_task.map(Message::PrismEvent))
     }

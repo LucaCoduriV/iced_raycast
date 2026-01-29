@@ -4,6 +4,7 @@ pub use crate::common::Image;
 use anyhow::Result;
 pub use application::App;
 pub use application::Application;
+pub use common::AppState;
 
 mod application;
 mod common;
