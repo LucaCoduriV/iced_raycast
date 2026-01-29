@@ -3,7 +3,6 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use iced::{
-    Length,
     widget::{image, svg},
 };
 

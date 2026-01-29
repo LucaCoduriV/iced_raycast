@@ -1,15 +1,15 @@
+use crate::design_system::icons;
 use iced::{
     Alignment, Background, Color, Element, Length, gradient,
     widget::{Id, button, column, container, image, row, space::horizontal, svg, text, text_input},
 };
 
+use super::PrismEvent;
 use crate::{
-    design_system::{
-        colors, icons, spacing,
-        typo::{self, Typography},
-    },
-    prism::{ListEntry, items::IconHandle},
+    design_system::{colors, spacing, typo},
+    prism::items::{IconHandle, ListEntry},
 };
+use crate::design_system::typo::Typography;
 
 /// A specialized search input with transparent styling
 pub fn search_bar<'a, Message>(
