@@ -22,9 +22,11 @@ pub struct UsageInfo {
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::{APPLICATION, ORGANISATION, QUALIFIER};
+
 impl AppState {
     fn get_path() -> std::path::PathBuf {
-        let proj_dirs = ProjectDirs::from("com", "your_name", "your_launcher")
+        let proj_dirs = ProjectDirs::from(QUALIFIER, ORGANISATION, APPLICATION)
             .expect("Could not find config directory");
         let data_dir = proj_dirs.data_local_dir();
 

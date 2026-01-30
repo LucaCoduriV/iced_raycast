@@ -155,7 +155,7 @@ impl Application for LinuxApplication {
         None
     }
 
-    fn execute(&self, _arg: Option<&str>) -> Result<()> {
+    fn execute(&self, _arg: Option<String>) -> Result<()> {
         if self.exec.is_empty() {
             return Ok(());
         }
