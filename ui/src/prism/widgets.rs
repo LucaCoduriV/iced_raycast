@@ -1,31 +1,44 @@
 use crate::design_system::icons;
+use core::Image;
 use iced::{
     Alignment, Background, Color, Element, Length, gradient,
-    widget::{Id, button, column, container, image, row, space::horizontal, svg, text, text_input},
+    widget::{Id, Row, container, image, svg, text, text_input},
+    widget::{button, column, row, space::horizontal},
 };
 
-use super::PrismEvent;
+use crate::design_system::typo::Typography;
 use crate::{
     design_system::{colors, spacing, typo},
     prism::items::{IconHandle, ListEntry},
 };
-use crate::design_system::typo::Typography;
 
 /// A specialized search input with transparent styling
 pub fn search_bar<'a, Message>(
     id: Id,
     query: &'a str,
     on_input: impl Fn(String) -> Message + 'a,
+    argument_id: Id,
+    argument: &'a str,
+    on_argument_input: impl Fn(String) -> Message + 'a,
+    icon: Option<Image>,
+    needs_argument: bool,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    text_input("Search for apps and commands...", query)
+    let search_input_width = if needs_argument {
+        Length::FillPortion(1)
+    } else {
+        Length::Fill
+    };
+
+    let search_input = text_input("Search for apps and commands...", query)
         .on_input(on_input)
         .id(id)
         .size(typo::TITLE_L.0)
         .font(typo::TITLE_L.2)
         .padding(15)
+        .width(search_input_width)
         .style(|_theme, _status| text_input::Style {
             background: Color::TRANSPARENT.into(),
             border: iced::Border {
@@ -36,8 +49,39 @@ where
             placeholder: Color::WHITE,
             value: Color::WHITE,
             selection: Color::WHITE,
-        })
-        .into()
+        });
+
+    let mut row = Row::new().push(search_input);
+
+    if needs_argument {
+        if let Some(icon) = icon {
+            let icon_handle: IconHandle = icon.into();
+            row = row.push(render_icon(icon_handle, icons::MD));
+        }
+
+        let argument_input = text_input("Argument...", argument)
+            .on_input(on_argument_input)
+            .id(argument_id)
+            .size(typo::TITLE_L.0)
+            .font(typo::TITLE_L.2)
+            .padding(15)
+            .width(Length::FillPortion(2))
+            .style(|_theme, _status| text_input::Style {
+                background: Color::TRANSPARENT.into(),
+                border: iced::Border {
+                    width: 0.0,
+                    ..Default::default()
+                },
+                icon: Color::WHITE,
+                placeholder: Color::WHITE,
+                value: Color::WHITE,
+                selection: Color::WHITE,
+            });
+
+        row = row.push(argument_input);
+    }
+
+    row.into()
 }
 
 /// A gradient divider line

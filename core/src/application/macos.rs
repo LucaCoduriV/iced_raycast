@@ -52,13 +52,15 @@ impl Application for MacOSApplication {
         })
     }
 
-    fn execute(&self, arg: Option<&str>) -> anyhow::Result<()> {
+    fn execute(&self, arg: Option<String>) -> anyhow::Result<()> {
         let mut cmd = Command::new("open");
 
         cmd.arg("-a").arg(&self.inner.path);
 
         if let Some(a) = arg {
-            cmd.arg("--args").arg(a);
+            if !a.is_empty() {
+                cmd.arg("--args").arg(a);
+            }
         }
 
         cmd.spawn()?;

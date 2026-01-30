@@ -32,8 +32,8 @@ impl ListEntry {
         self.image_handler.clone()
     }
 
-    pub fn execute(&self) -> Result<()> {
-        self.entity.execute()
+    pub fn execute(&self, arg: Option<String>) -> Result<()> {
+        self.entity.execute(arg)
     }
 }
 
@@ -70,4 +70,19 @@ impl From<Entity> for ListEntry {
 pub enum IconHandle {
     Svg(svg::Handle),
     Other(image::Handle),
+}
+
+impl From<core::Image> for IconHandle {
+    fn from(value: core::Image) -> Self {
+        match value {
+            core::Image::Data(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Path(path) => {
+                let path_obj = Path::new(&path);
+                match path_obj.extension().and_then(|s| s.to_str()) {
+                    Some("svg") => IconHandle::Svg(svg::Handle::from_path(path_obj)),
+                    _ => IconHandle::Other(image::Handle::from_path(path_obj)),
+                }
+            }
+        }
+    }
 }

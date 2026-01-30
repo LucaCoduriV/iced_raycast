@@ -1,155 +1,263 @@
 mod items;
 pub mod state;
 mod widgets;
+mod keybindings;
 
-use crate::prism::items::ListEntry;
 use self::state::{PrismEntry, PrismState};
 use crate::design_system::{colors, spacing};
-use core::{get_entities, search::SearchEngine, AppState};
+use crate::prism::items::ListEntry;
+use core::{AppState, get_entities, search::SearchEngine};
 use iced::{
+    Element, Length, Rectangle, Size, Subscription, Task,
     advanced::widget::{operate, operation},
     event, keyboard,
     widget::{
-        column, container,
-        operation::scroll_to,
+        Id, column, container,
+        operation::{focus, scroll_to},
         scrollable,
         selector::{self, Selector},
-        Id,
     },
-    Element, Length, Rectangle, Size, Subscription, Task,
 };
+
+pub struct Prism {
+    state: PrismState,
+}
+
+impl Prism {
+    pub fn new() -> (Self, Task<PrismEvent>) {
+        let search_id = Id::unique();
+        let argument_id = Id::unique();
+        let scroll_id = Id::unique();
+
+        let state = PrismState {
+            query: "".to_string(),
+            argument: "".to_string(),
+            all_entries: Vec::new(),
+            entries: Vec::new(),
+            selected_index: 0,
+            search_id: search_id.clone(),
+            argument_id,
+            scroll_id,
+            viewport_height: 0.0,
+            current_scroll_offset: 0.0,
+            height_cache: std::collections::HashMap::new(),
+            default_row_height: 54.0,
+            show_argument_input: false,
+            is_argument_input_active: false,
+        };
+
+        let load_task = Task::perform(
+            async { get_entities().into_iter().map(From::from).collect() },
+            PrismEvent::EntriesLoaded,
+        );
+        let init_task = Task::perform(async {}, |_| PrismEvent::Initialized);
+
+        (Self { state }, Task::batch(vec![load_task, init_task]))
+    }
+
+    pub fn update(&mut self, message: PrismEvent, app_state: &mut AppState) -> Task<PrismEvent> {
+        match message {
+            PrismEvent::Initialized => focus(self.state.search_id.clone()),
+
+            PrismEvent::Scrolled(viewport) => {
+                self.state.current_scroll_offset = viewport.absolute_offset().y;
+                self.state.viewport_height = viewport.bounds().height;
+                Task::none()
+            }
+
+            PrismEvent::EntriesLoaded(loaded_entries) => {
+                let mut wrapped_entries: Vec<PrismEntry> =
+                    loaded_entries.into_iter().map(PrismEntry::from).collect();
+
+                wrapped_entries.sort_by(|a, b| {
+                    SearchEngine::compare(&a.entry.entity, &b.entry.entity, app_state)
+                });
+
+                self.state.all_entries = wrapped_entries.clone();
+                self.state.entries = wrapped_entries;
+
+                measure_all_visible_items(&self.state)
+            }
+
+            PrismEvent::SearchInput(query) => {
+                self.state.query = query;
+                self.state.selected_index = 0;
+                self.state.argument = String::new(); // Clear argument
+                self.state.show_argument_input = false; // Hide argument input
+                self.state.is_argument_input_active = false; // Not active
+                self.state.entries = self
+                    .state
+                    .all_entries
+                    .iter()
+                    .filter(|e| SearchEngine::matches(&e.entry.entity, &self.state.query))
+                    .cloned()
+                    .collect();
+
+                Task::batch(vec![
+                    scroll_to(
+                        self.state.scroll_id.clone(),
+                        scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+                    ),
+                    measure_all_visible_items(&self.state),
+                ])
+            }
+
+            PrismEvent::ArgumentInput(arg) => {
+                self.state.argument = arg;
+                Task::none()
+            }
+
+            PrismEvent::SelectNext => {
+                if !self.state.entries.is_empty() {
+                    self.state.selected_index =
+                        (self.state.selected_index + 1).min(self.state.entries.len() - 1);
+                    return smart_scroll(&self.state);
+                }
+                Task::none()
+            }
+
+            PrismEvent::SelectPrevious => {
+                self.state.selected_index = self.state.selected_index.saturating_sub(1);
+                smart_scroll(&self.state)
+            }
+
+            PrismEvent::ItemMeasured { id, rect } => {
+                if rect.height > 0.0 {
+                    self.state.height_cache.insert(id, rect.height);
+                    self.state.default_row_height = rect.height;
+                }
+                Task::none()
+            }
+
+            PrismEvent::EntrySelected(index) => {
+                self.state.selected_index = index;
+                if let Some(entry) = self.get_selected_entry() {
+                    if entry.entry.entity.needs_argument() {
+                        self.state.show_argument_input = true;
+                        self.state.is_argument_input_active = true; // Set active
+                        return focus(self.state.argument_id.clone());
+                    }
+                    self.state.is_argument_input_active = false; // Not active
+                    return Task::batch(vec![
+                        focus(self.state.search_id.clone()),
+                        Task::done(PrismEvent::Run),
+                    ]);
+                }
+                Task::none()
+            }
+
+            PrismEvent::Submit => {
+                // If there's a selected entry, treat Submit as if that entry was selected by a click.
+                // This ensures the selected_index is properly handled and the command runs if applicable.
+                if !self.state.entries.is_empty() {
+                    return self.update(PrismEvent::EntrySelected(self.state.selected_index), app_state);
+                }
+                Task::none()
+            }
+
+            PrismEvent::EscapePressed => {
+                if self.state.is_argument_input_active {
+                    // One level up: from argument input to search input
+                    self.state.argument = String::new();
+                    self.state.show_argument_input = false;
+                    self.state.is_argument_input_active = false; // Argument input is no longer active
+                    focus(self.state.search_id.clone())
+                } else {
+                    // Root level: exit the application
+                    Task::done(PrismEvent::ExitApp)
+                }
+            }
+
+            _ => Task::none(),
+        }
+    }
+
+    pub fn get_argument(&self) -> String {
+        self.state.argument.clone()
+    }
+
+    pub fn get_selected_entry(&self) -> Option<&PrismEntry> {
+        self.state.entries.get(self.state.selected_index)
+    }
+
+    pub fn subscription(&self) -> Subscription<PrismEvent> {
+        event::listen_with(|event, _status, _window| {
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+                keybindings::map_key_to_action(key).map(|action| match action {
+                    keybindings::KeyAction::SelectPrevious => PrismEvent::SelectPrevious,
+                    keybindings::KeyAction::SelectNext => PrismEvent::SelectNext,
+                    keybindings::KeyAction::Submit => PrismEvent::Submit,
+                    keybindings::KeyAction::EscapePressed => PrismEvent::EscapePressed,
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
+        let selected_entry = self.get_selected_entry();
+        let search_section = widgets::search_bar(
+            self.state.search_id.clone(),
+            &self.state.query,
+            PrismEvent::SearchInput,
+            self.state.argument_id.clone(),
+            &self.state.argument,
+            PrismEvent::ArgumentInput,
+            selected_entry.and_then(|e| e.entry.entity.icon()),
+            self.state.show_argument_input,
+        );
+
+        let list_section = self.state.entries.iter().enumerate().map(|(i, entry)| {
+            container(widgets::list_item(
+                &entry.entry,
+                i == self.state.selected_index,
+                PrismEvent::EntrySelected(i),
+            ))
+            .id(entry.id.clone())
+            .into()
+        });
+
+        container(column![
+            search_section,
+            widgets::divider(),
+            scrollable(column(list_section))
+                .id(self.state.scroll_id.clone())
+                .on_scroll(PrismEvent::Scrolled)
+                .height(Length::Fill)
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(spacing::SPACE_S)
+        .style(|_| container::Style {
+            background: Some(colors::SURFACE_CONTAINER.scale_alpha(0.8).into()),
+            border: iced::Border {
+                color: colors::ON_SURFACE.scale_alpha(0.3),
+                width: 1.0,
+                radius: 15.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum PrismEvent {
     Initialized,
     SearchInput(String),
+    ArgumentInput(String),
     SelectNext,
     SelectPrevious,
     EntrySelected(usize),
     Submit,
     EntriesLoaded(Vec<ListEntry>),
-    Exit,
+
     Scrolled(scrollable::Viewport),
     ItemMeasured { id: Id, rect: Rectangle },
-    StateUpdated(AppState),
-}
-
-pub fn new(app_state: AppState) -> (PrismState, Task<PrismEvent>) {
-    let search_id = Id::unique();
-    let scroll_id = Id::unique();
-
-    let state = PrismState {
-        query: "".to_string(),
-        all_entries: Vec::new(),
-        entries: Vec::new(),
-        selected_index: 0,
-        search_id: search_id.clone(),
-        scroll_id,
-        viewport_height: 0.0,
-        current_scroll_offset: 0.0,
-        height_cache: std::collections::HashMap::new(),
-        default_row_height: 54.0,
-        app_state,
-    };
-
-    let load_task = Task::perform(
-        async { get_entities().into_iter().map(From::from).collect() },
-        PrismEvent::EntriesLoaded,
-    );
-    let init_task = Task::perform(async {}, |_| PrismEvent::Initialized);
-
-    (state, Task::batch(vec![load_task, init_task]))
-}
-
-pub fn update(state: &mut PrismState, message: PrismEvent) -> Task<PrismEvent> {
-    match message {
-        PrismEvent::Initialized => iced::widget::operation::focus(state.search_id.clone()),
-
-        PrismEvent::Scrolled(viewport) => {
-            state.current_scroll_offset = viewport.absolute_offset().y;
-            state.viewport_height = viewport.bounds().height;
-            Task::none()
-        }
-
-        PrismEvent::EntriesLoaded(loaded_entries) => {
-            let mut wrapped_entries: Vec<PrismEntry> =
-                loaded_entries.into_iter().map(PrismEntry::from).collect();
-
-            wrapped_entries.sort_by(|a, b| {
-                SearchEngine::compare(&a.entry.entity, &b.entry.entity, &state.app_state)
-            });
-
-            state.all_entries = wrapped_entries.clone();
-            state.entries = wrapped_entries;
-
-            // Measure every item in the list immediately upon loading
-            measure_all_visible_items(state)
-        }
-
-        PrismEvent::SearchInput(query) => {
-            state.query = query;
-            state.selected_index = 0;
-            state.entries = state
-                .all_entries
-                .iter()
-                .filter(|e| SearchEngine::matches(&e.entry.entity, &state.query))
-                .cloned()
-                .collect();
-
-            Task::batch(vec![
-                scroll_to(
-                    state.scroll_id.clone(),
-                    scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
-                ),
-                measure_all_visible_items(state),
-            ])
-        }
-
-        PrismEvent::SelectNext => {
-            if !state.entries.is_empty() {
-                state.selected_index = (state.selected_index + 1).min(state.entries.len() - 1);
-                return smart_scroll(state);
-            }
-            Task::none()
-        }
-
-        PrismEvent::SelectPrevious => {
-            state.selected_index = state.selected_index.saturating_sub(1);
-            smart_scroll(state)
-        }
-
-        PrismEvent::ItemMeasured { id, rect } => {
-            if rect.height > 0.0 {
-                state.height_cache.insert(id, rect.height);
-                state.default_row_height = rect.height;
-            }
-            Task::none()
-        }
-
-        PrismEvent::EntrySelected(index) => {
-            state.selected_index = index;
-            Task::none()
-        }
-
-        PrismEvent::Submit => {
-            // We let the parent handle the execution
-            // We just need to wait for it to be done
-            Task::none()
-        }
-
-        PrismEvent::StateUpdated(new_state) => {
-            state.app_state = new_state;
-            state.all_entries.sort_by(|a, b| {
-                SearchEngine::compare(&a.entry.entity, &b.entry.entity, &state.app_state)
-            });
-            state.entries.sort_by(|a, b| {
-                SearchEngine::compare(&a.entry.entity, &b.entry.entity, &state.app_state)
-            });
-            Task::none()
-        }
-
-        PrismEvent::Exit => iced::exit(),
-    }
+    Run,
+    EscapePressed,
+    ExitApp, // New variant for exiting the application
 }
 
 fn measure_all_visible_items(state: &PrismState) -> Task<PrismEvent> {
@@ -223,64 +331,4 @@ fn smart_scroll(state: &PrismState) -> Task<PrismEvent> {
     }
 
     Task::none()
-}
-
-pub fn get_selected_entry(state: &PrismState) -> Option<&PrismEntry> {
-    state.entries.get(state.selected_index)
-}
-
-pub fn subscription() -> Subscription<PrismEvent> {
-    event::listen_with(|event, _status, _window| {
-        if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
-            match key {
-                keyboard::Key::Named(keyboard::key::Named::ArrowUp) => Some(PrismEvent::SelectPrevious),
-                keyboard::Key::Named(keyboard::key::Named::ArrowDown) => Some(PrismEvent::SelectNext),
-                keyboard::Key::Named(keyboard::key::Named::Enter) => Some(PrismEvent::Submit),
-                keyboard::Key::Named(keyboard::key::Named::Escape) => Some(PrismEvent::Exit),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    })
-}
-
-pub fn view<'a>(state: &'a PrismState) -> Element<'a, PrismEvent> {
-    let search_section = widgets::search_bar(
-        state.search_id.clone(),
-        &state.query,
-        PrismEvent::SearchInput,
-    );
-
-    let list_section = state.entries.iter().enumerate().map(|(i, entry)| {
-        container(widgets::list_item(
-            &entry.entry,
-            i == state.selected_index,
-            PrismEvent::EntrySelected(i),
-        ))
-        .id(entry.id.clone())
-        .into()
-    });
-
-    container(column![
-        search_section,
-        widgets::divider(),
-        scrollable(column(list_section))
-            .id(state.scroll_id.clone())
-            .on_scroll(PrismEvent::Scrolled)
-            .height(Length::Fill)
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(spacing::SPACE_S)
-    .style(|_| container::Style {
-        background: Some(colors::SURFACE_CONTAINER.scale_alpha(0.8).into()),
-        border: iced::Border {
-            color: colors::ON_SURFACE.scale_alpha(0.3),
-            width: 1.0,
-            radius: 15.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
 }

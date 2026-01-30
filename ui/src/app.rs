@@ -1,3 +1,5 @@
+use std::process;
+
 use core::AppState;
 
 use iced::{Color, Element, Event, Task, event, widget::container};
@@ -8,14 +10,14 @@ use crate::prism;
 use crate::prism::PrismEvent;
 
 pub struct Raycast {
-    prism: prism::state::PrismState,
+    prism: prism::Prism,
     app_state: AppState,
 }
 
 impl Raycast {
     pub fn new() -> (Raycast, Task<Message>) {
         let app_state = AppState::load();
-        let (prism, prism_task) = prism::new(app_state.clone());
+        let (prism, prism_task) = prism::Prism::new();
 
         let state = Raycast { prism, app_state };
 
@@ -29,25 +31,33 @@ impl Raycast {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PrismEvent(prism_event) => {
-                if let PrismEvent::Submit = prism_event {
-                    if let Some(entry) = prism::get_selected_entry(&self.prism).cloned() {
-                        self.app_state.record_usage(&entry.entry.entity);
-                        if let Err(e) = self.app_state.save() {
-                            eprintln!("Failed to save state: {}", e);
-                        }
+                let task = self.prism.update(prism_event, &mut self.app_state);
+                task.map(|event| {
+                    if matches!(event, PrismEvent::Run) {
+                        Message::Run
+                    } else if matches!(event, PrismEvent::ExitApp) {
+                        Message::ExitApp // Explicitly map PrismEvent::ExitApp to top-level Message::ExitApp
+                    }
+                    else {
+                        Message::PrismEvent(event)
+                    }
+                })
+            }
+            Message::Run => {
+                if let Some(entry) = self.prism.get_selected_entry().cloned() {
+                    self.app_state.record_usage(&entry.entry.entity);
+                    if let Err(e) = self.app_state.save() {
+                        eprintln!("Failed to save state: {}", e);
+                    }
 
-                        if let Err(e) = entry.entry.execute() {
-                            eprintln!("Failed to launch: {}", e);
-                        }
-
-                        let new_state = self.app_state.clone();
-                        return Task::perform(async {}, move |_| {
-                            Message::PrismEvent(PrismEvent::StateUpdated(new_state))
-                        });
+                    let argument = self.prism.get_argument();
+                    if let Err(e) = entry.entry.execute(Some(argument)) {
+                        eprintln!("Failed to launch: {}", e);
                     }
                 }
-                prism::update(&mut self.prism, prism_event).map(Message::PrismEvent)
+                Task::perform(async { process::exit(0); }, |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)))
             }
+            Message::ExitApp => Task::perform(async { process::exit(0); }, |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed))),
             _ => Task::none(),
         }
     }
@@ -57,12 +67,15 @@ impl Raycast {
 
         Subscription::batch(vec![
             event::listen().map(Message::IcedEvent),
-            prism::subscription().map(Message::PrismEvent),
+            self.prism.subscription().map(|event| match event {
+                PrismEvent::ExitApp => Message::ExitApp,
+                _ => Message::PrismEvent(event),
+            }),
         ])
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
-        container(prism::view(&self.prism).map(Message::PrismEvent)).into()
+        container(self.prism.view().map(Message::PrismEvent)).into()
     }
 
     pub fn style(&self, _theme: &iced::Theme) -> iced::theme::Style {
@@ -79,4 +92,6 @@ pub enum Message {
     #[allow(dead_code)]
     IcedEvent(Event),
     PrismEvent(PrismEvent),
+    Run,
+    ExitApp, // New variant to signal application exit
 }

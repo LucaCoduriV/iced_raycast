@@ -26,9 +26,5 @@ pub trait Application {
     fn alias(&self) -> Option<&str>;
     fn description(&self) -> Option<&str>;
     fn icon(&self) -> Option<Image>;
-    fn execute(&self, arg: Option<&str>) -> Result<()>;
-}
-
-pub fn get_apps() -> Vec<App> {
-    ConcreteApp::lookup_applications()
+    fn execute(&self, arg: Option<String>) -> Result<()>;
 }
