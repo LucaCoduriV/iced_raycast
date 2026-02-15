@@ -4,11 +4,17 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(target_os = "windows")]
+mod windows;
+
 #[cfg(target_os = "linux")]
 use linux::LinuxApplication as ConcreteApp;
 
 #[cfg(target_os = "macos")]
 use macos::MacOSApplication as ConcreteApp;
+
+#[cfg(target_os = "windows")]
+use windows::WindowsApplication as ConcreteApp;
 
 use anyhow::Result;
 
