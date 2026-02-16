@@ -12,7 +12,7 @@ impl Application for WindowsApplication {
     }
 
     fn name(&self) -> &str {
-        "Salut"
+        &self.name()
     }
 
     fn alias(&self) -> Option<&str> {
