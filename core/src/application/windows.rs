@@ -15,10 +15,8 @@ impl Application for WindowsApplication {
     {
         let mut apps = Vec::new();
 
-        // On demande à app_info de récupérer les apps avec des icônes de 32x32 pixels
         if let Ok(installed_apps) = app_info::get_installed_apps(32) {
             for app in installed_apps {
-                // On convertit l'icône retournée par app_info en notre type Image::Rgba
                 let icon = app.icon.map(|i| Image::Rgba(i.width, i.height, i.pixels));
 
                 apps.push(WindowsApplication {
@@ -49,7 +47,6 @@ impl Application for WindowsApplication {
     }
 
     fn execute(&self, _arg: Option<String>) -> anyhow::Result<()> {
-        // Lancer l'application via cmd /c start
         std::process::Command::new("cmd")
             .args(["/c", "start", ""])
             .arg(&self.path)
