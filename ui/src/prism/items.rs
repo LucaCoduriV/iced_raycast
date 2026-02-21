@@ -2,9 +2,7 @@ use core::Entity;
 use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
-use iced::{
-    widget::{image, svg},
-};
+use iced::widget::{image, svg};
 
 #[derive(Clone, Debug)]
 pub struct ListEntry {
@@ -44,6 +42,9 @@ impl From<Entity> for ListEntry {
             .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
         {
             core::Image::Data(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Rgba(width, height, pixels) => {
+                IconHandle::Other(image::Handle::from_rgba(width, height, pixels))
+            }
             core::Image::Path(path) => {
                 let path_obj = Path::new(&path);
                 match path_obj.extension().and_then(|s| s.to_str()) {
@@ -76,6 +77,9 @@ impl From<core::Image> for IconHandle {
     fn from(value: core::Image) -> Self {
         match value {
             core::Image::Data(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Rgba(width, height, pixels) => {
+                IconHandle::Other(image::Handle::from_rgba(width, height, pixels))
+            }
             core::Image::Path(path) => {
                 let path_obj = Path::new(&path);
                 match path_obj.extension().and_then(|s| s.to_str()) {

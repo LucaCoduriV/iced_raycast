@@ -7,6 +7,7 @@ use std::fs;
 pub enum Image {
     Data(Vec<u8>),
     Path(String),
+    Rgba(u32, u32, Vec<u8>),
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
