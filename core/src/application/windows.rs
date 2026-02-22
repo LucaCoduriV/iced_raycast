@@ -13,21 +13,22 @@ impl Application for WindowsApplication {
     where
         Self: Sized,
     {
-        let mut apps = Vec::new();
-
-        if let Ok(installed_apps) = app_info::get_installed_apps(32) {
-            for app in installed_apps {
-                let icon = app.icon.map(|i| Image::Rgba(i.width, i.height, i.pixels));
-
-                apps.push(WindowsApplication {
-                    name: app.name,
-                    path: app.path,
-                    icon,
-                });
-            }
-        }
-
-        apps
+       app_info::get_installed_apps(32)
+        .map(|installed_apps| {
+            installed_apps
+                .into_iter()
+                .map(|app| {
+                    let icon = app.icon.map(|i| Image::Rgba(i.width, i.height, i.pixels));
+                    
+                    WindowsApplication {
+                        name: app.name,
+                        path: app.path,
+                        icon,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     fn name(&self) -> &str {
