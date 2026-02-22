@@ -5,7 +5,7 @@ use std::fs;
 
 #[derive(Debug, Clone)]
 pub enum Image {
-    Data(Vec<u8>),
+    Bytes(Vec<u8>),
     Path(String),
     Rgba(u32, u32, Vec<u8>),
 }

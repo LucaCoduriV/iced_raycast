@@ -41,7 +41,9 @@ impl From<Entity> for ListEntry {
             .icon()
             .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
         {
-            core::Image::Data(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Bytes(bytes) => {
+                IconHandle::Other(image::Handle::from_bytes(bytes.clone()))
+            }
             core::Image::Rgba(width, height, pixels) => {
                 IconHandle::Other(image::Handle::from_rgba(width, height, pixels))
             }
@@ -76,7 +78,9 @@ pub enum IconHandle {
 impl From<core::Image> for IconHandle {
     fn from(value: core::Image) -> Self {
         match value {
-            core::Image::Data(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes.clone())),
+            core::Image::Bytes(bytes) => {
+                IconHandle::Other(image::Handle::from_bytes(bytes.clone()))
+            }
             core::Image::Rgba(width, height, pixels) => {
                 IconHandle::Other(image::Handle::from_rgba(width, height, pixels))
             }
