@@ -1,7 +1,7 @@
 mod items;
+mod keybindings;
 pub mod state;
 mod widgets;
-mod keybindings;
 
 use self::state::{PrismEntry, PrismState};
 use crate::design_system::{colors, spacing};
@@ -150,7 +150,10 @@ impl Prism {
                 // If there's a selected entry, treat Submit as if that entry was selected by a click.
                 // This ensures the selected_index is properly handled and the command runs if applicable.
                 if !self.state.entries.is_empty() {
-                    return self.update(PrismEvent::EntrySelected(self.state.selected_index), app_state);
+                    return self.update(
+                        PrismEvent::EntrySelected(self.state.selected_index),
+                        app_state,
+                    );
                 }
                 Task::none()
             }

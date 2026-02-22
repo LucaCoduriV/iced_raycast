@@ -37,8 +37,7 @@ impl Raycast {
                         Message::Run
                     } else if matches!(event, PrismEvent::ExitApp) {
                         Message::ExitApp // Explicitly map PrismEvent::ExitApp to top-level Message::ExitApp
-                    }
-                    else {
+                    } else {
                         Message::PrismEvent(event)
                     }
                 })
@@ -55,9 +54,19 @@ impl Raycast {
                         eprintln!("Failed to launch: {}", e);
                     }
                 }
-                Task::perform(async { process::exit(0); }, |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)))
+                Task::perform(
+                    async {
+                        process::exit(0);
+                    },
+                    |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)),
+                )
             }
-            Message::ExitApp => Task::perform(async { process::exit(0); }, |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed))),
+            Message::ExitApp => Task::perform(
+                async {
+                    process::exit(0);
+                },
+                |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)),
+            ),
             _ => Task::none(),
         }
     }

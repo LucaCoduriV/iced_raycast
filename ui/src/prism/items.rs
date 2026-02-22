@@ -2,9 +2,7 @@ use core::Entity;
 use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
-use iced::{
-    widget::{image, svg},
-};
+use iced::widget::{image, svg};
 
 #[derive(Clone, Debug)]
 pub struct ListEntry {
