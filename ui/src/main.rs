@@ -20,6 +20,7 @@ pub fn main() -> iced::Result {
                 width: 700.,
                 height: 500.,
             },
+            position: window::Position::Centered,
             resizable: false,
             closeable: false,
             minimizable: false,
