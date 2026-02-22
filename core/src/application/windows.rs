@@ -13,22 +13,22 @@ impl Application for WindowsApplication {
     where
         Self: Sized,
     {
-       app_info::get_installed_apps(32)
-        .map(|installed_apps| {
-            installed_apps
-                .into_iter()
-                .map(|app| {
-                    let icon = app.icon.map(|i| Image::Rgba(i.width, i.height, i.pixels));
-                    
-                    WindowsApplication {
-                        name: app.name,
-                        path: app.path,
-                        icon,
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+        app_info::get_installed_apps(32)
+            .map(|installed_apps| {
+                installed_apps
+                    .into_iter()
+                    .map(|app| {
+                        let icon = app.icon.map(|i| Image::Rgba(i.width, i.height, i.pixels));
+
+                        WindowsApplication {
+                            name: app.name,
+                            path: app.path,
+                            icon,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn name(&self) -> &str {
