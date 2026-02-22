@@ -50,19 +50,9 @@ impl Raycast {
                         eprintln!("Failed to launch: {}", e);
                     }
                 }
-                Task::perform(
-                    async {
-                        process::exit(0);
-                    },
-                    |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)),
-                )
+                iced::exit()
             }
-            Message::ExitApp => Task::perform(
-                async {
-                    process::exit(0);
-                },
-                |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)),
-            ),
+            Message::ExitApp => iced::exit(),
             _ => Task::none(),
         }
     }
