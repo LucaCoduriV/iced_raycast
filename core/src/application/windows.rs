@@ -8,7 +8,6 @@ pub struct WindowsApplication {
     pub icon: Option<Image>,
 }
 
-
 impl Application for WindowsApplication {
     fn lookup_applications() -> Vec<Self>
     where
