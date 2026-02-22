@@ -21,24 +21,18 @@ pub fn search_bar<'a, Message>(
     argument: &'a str,
     on_argument_input: impl Fn(String) -> Message + 'a,
     icon: Option<Image>,
-    needs_argument: bool,
+    show_argument_input: bool,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let search_input_width = if needs_argument {
-        Length::FillPortion(1)
-    } else {
-        Length::Fill
-    };
-
     let search_input = text_input("Search for apps and commands...", query)
         .on_input(on_input)
         .id(id)
         .size(typo::TITLE_L.0)
         .font(typo::TITLE_L.2)
         .padding(15)
-        .width(search_input_width)
+        .width(Length::FillPortion(1))
         .style(|_theme, _status| text_input::Style {
             background: Color::TRANSPARENT.into(),
             border: iced::Border {
@@ -53,7 +47,7 @@ where
 
     let mut row = Row::new().push(search_input);
 
-    if needs_argument {
+    if show_argument_input {
         if let Some(icon) = icon {
             let icon_handle: IconHandle = icon.into();
             row = row.push(render_icon(icon_handle, icons::MD));
@@ -65,7 +59,8 @@ where
             .size(typo::TITLE_L.0)
             .font(typo::TITLE_L.2)
             .padding(15)
-            .width(Length::FillPortion(2))
+            .width(Length::FillPortion(1))
+            .align_x(Alignment::End)
             .style(|_theme, _status| text_input::Style {
                 background: Color::TRANSPARENT.into(),
                 border: iced::Border {
