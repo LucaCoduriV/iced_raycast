@@ -31,7 +31,7 @@ impl Prism {
 
         let state = PrismState {
             query: "".to_string(),
-            argument: "".to_string(),
+            argument: None,
             all_entries: Vec::new(),
             entries: Vec::new(),
             selected_index: 0,
@@ -82,9 +82,9 @@ impl Prism {
             PrismEvent::SearchInput(query) => {
                 self.state.query = query;
                 self.state.selected_index = 0;
-                self.state.argument = String::new(); // Clear argument
-                self.state.show_argument_input = false; // Hide argument input
-                self.state.is_argument_input_active = false; // Not active
+                self.state.argument = None;
+                self.state.show_argument_input = false;
+                self.state.is_argument_input_active = false;
                 self.state.entries = self
                     .state
                     .all_entries
@@ -103,7 +103,7 @@ impl Prism {
             }
 
             PrismEvent::ArgumentInput(arg) => {
-                self.state.argument = arg;
+                self.state.argument = Some(arg);
                 Task::none()
             }
 
@@ -132,12 +132,12 @@ impl Prism {
             PrismEvent::EntrySelected(index) => {
                 self.state.selected_index = index;
                 if let Some(entry) = self.get_selected_entry() {
-                    if entry.entry.entity.needs_argument() {
+                    if entry.entry.entity.needs_argument() && self.get_argument().is_none() {
                         self.state.show_argument_input = true;
-                        self.state.is_argument_input_active = true; // Set active
+                        self.state.is_argument_input_active = true;
                         return focus(self.state.argument_id.clone());
                     }
-                    self.state.is_argument_input_active = false; // Not active
+                    self.state.is_argument_input_active = false;
                     return Task::batch(vec![
                         focus(self.state.search_id.clone()),
                         Task::done(PrismEvent::Run),
@@ -160,13 +160,11 @@ impl Prism {
 
             PrismEvent::EscapePressed => {
                 if self.state.is_argument_input_active {
-                    // One level up: from argument input to search input
-                    self.state.argument = String::new();
+                    self.state.argument = Option::None;
                     self.state.show_argument_input = false;
-                    self.state.is_argument_input_active = false; // Argument input is no longer active
+                    self.state.is_argument_input_active = false;
                     focus(self.state.search_id.clone())
                 } else {
-                    // Root level: exit the application
                     Task::done(PrismEvent::ExitApp)
                 }
             }
@@ -175,7 +173,7 @@ impl Prism {
         }
     }
 
-    pub fn get_argument(&self) -> String {
+    pub fn get_argument(&self) -> Option<String> {
         self.state.argument.clone()
     }
 
@@ -205,7 +203,7 @@ impl Prism {
             &self.state.query,
             PrismEvent::SearchInput,
             self.state.argument_id.clone(),
-            &self.state.argument,
+            self.state.argument.as_deref(),
             PrismEvent::ArgumentInput,
             selected_entry.and_then(|e| e.entry.entity.icon()),
             self.state.show_argument_input,

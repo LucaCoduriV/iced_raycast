@@ -6,7 +6,6 @@ pub enum Key {
     ArrowDown,
     Enter,
     Escape,
-    // Add other keys here as needed
     Other,
 }
 
@@ -28,7 +27,6 @@ pub enum KeyAction {
     SelectNext,
     Submit,
     EscapePressed,
-    // Add other actions here
 }
 
 pub fn map_key_to_action(key: keyboard::Key) -> Option<KeyAction> {

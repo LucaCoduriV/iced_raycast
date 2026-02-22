@@ -32,14 +32,10 @@ impl Raycast {
         match message {
             Message::PrismEvent(prism_event) => {
                 let task = self.prism.update(prism_event, &mut self.app_state);
-                task.map(|event| {
-                    if matches!(event, PrismEvent::Run) {
-                        Message::Run
-                    } else if matches!(event, PrismEvent::ExitApp) {
-                        Message::ExitApp // Explicitly map PrismEvent::ExitApp to top-level Message::ExitApp
-                    } else {
-                        Message::PrismEvent(event)
-                    }
+                task.map(|event| match event {
+                    PrismEvent::Run => Message::Run,
+                    PrismEvent::ExitApp => Message::ExitApp,
+                    e => Message::PrismEvent(e),
                 })
             }
             Message::Run => {
@@ -50,7 +46,7 @@ impl Raycast {
                     }
 
                     let argument = self.prism.get_argument();
-                    if let Err(e) = entry.entry.execute(Some(argument)) {
+                    if let Err(e) = entry.entry.execute(argument) {
                         eprintln!("Failed to launch: {}", e);
                     }
                 }

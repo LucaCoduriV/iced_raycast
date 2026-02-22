@@ -20,7 +20,7 @@ impl From<ListEntry> for PrismEntry {
 
 pub struct PrismState {
     pub query: String,
-    pub argument: String,
+    pub argument: Option<String>,
     pub all_entries: Vec<PrismEntry>,
     pub entries: Vec<PrismEntry>,
     pub selected_index: usize,

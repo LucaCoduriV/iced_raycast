@@ -18,7 +18,7 @@ pub fn search_bar<'a, Message>(
     query: &'a str,
     on_input: impl Fn(String) -> Message + 'a,
     argument_id: Id,
-    argument: &'a str,
+    argument: Option<&'a str>,
     on_argument_input: impl Fn(String) -> Message + 'a,
     icon: Option<Image>,
     show_argument_input: bool,
@@ -53,7 +53,7 @@ where
             row = row.push(render_icon(icon_handle, icons::MD));
         }
 
-        let argument_input = text_input("Argument...", argument)
+        let argument_input = text_input("Argument...", argument.unwrap_or_default())
             .on_input(on_argument_input)
             .id(argument_id)
             .size(typo::TITLE_L.0)
@@ -136,7 +136,6 @@ where
         .style(move |_theme, status| {
             let is_hovered = status == button::Status::Hovered;
 
-            // Move logic for background color here
             let bg_color = if is_selected || is_hovered {
                 colors::ON_SURFACE.scale_alpha(0.1)
             } else {
