@@ -1,5 +1,3 @@
-use std::process;
-
 use core::AppState;
 
 use iced::{Color, Element, Event, Task, event, widget::container};
@@ -88,5 +86,5 @@ pub enum Message {
     IcedEvent(Event),
     PrismEvent(PrismEvent),
     Run,
-    ExitApp, // New variant to signal application exit
+    ExitApp,
 }
