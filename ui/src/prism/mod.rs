@@ -147,8 +147,6 @@ impl Prism {
             }
 
             PrismEvent::Submit => {
-                // If there's a selected entry, treat Submit as if that entry was selected by a click.
-                // This ensures the selected_index is properly handled and the command runs if applicable.
                 if !self.state.entries.is_empty() {
                     return self.update(
                         PrismEvent::EntrySelected(self.state.selected_index),
@@ -258,7 +256,7 @@ pub enum PrismEvent {
     ItemMeasured { id: Id, rect: Rectangle },
     Run,
     EscapePressed,
-    ExitApp, // New variant for exiting the application
+    ExitApp,
 }
 
 fn measure_all_visible_items(state: &PrismState) -> Task<PrismEvent> {
