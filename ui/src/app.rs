@@ -1,5 +1,3 @@
-use std::process;
-
 use core::AppState;
 
 use iced::{Color, Element, Event, Task, event, widget::container};
@@ -32,14 +30,10 @@ impl Raycast {
         match message {
             Message::PrismEvent(prism_event) => {
                 let task = self.prism.update(prism_event, &mut self.app_state);
-                task.map(|event| {
-                    if matches!(event, PrismEvent::Run) {
-                        Message::Run
-                    } else if matches!(event, PrismEvent::ExitApp) {
-                        Message::ExitApp // Explicitly map PrismEvent::ExitApp to top-level Message::ExitApp
-                    } else {
-                        Message::PrismEvent(event)
-                    }
+                task.map(|event| match event {
+                    PrismEvent::Run => Message::Run,
+                    PrismEvent::ExitApp => Message::ExitApp,
+                    e => Message::PrismEvent(e),
                 })
             }
             Message::Run => {
@@ -50,23 +44,13 @@ impl Raycast {
                     }
 
                     let argument = self.prism.get_argument();
-                    if let Err(e) = entry.entry.execute(Some(argument)) {
+                    if let Err(e) = entry.entry.execute(argument) {
                         eprintln!("Failed to launch: {}", e);
                     }
                 }
-                Task::perform(
-                    async {
-                        process::exit(0);
-                    },
-                    |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)),
-                )
+                iced::exit()
             }
-            Message::ExitApp => Task::perform(
-                async {
-                    process::exit(0);
-                },
-                |_| Message::IcedEvent(Event::Window(iced::window::Event::Closed)),
-            ),
+            Message::ExitApp => iced::exit(),
             _ => Task::none(),
         }
     }
@@ -102,5 +86,5 @@ pub enum Message {
     IcedEvent(Event),
     PrismEvent(PrismEvent),
     Run,
-    ExitApp, // New variant to signal application exit
+    ExitApp,
 }

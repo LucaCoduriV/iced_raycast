@@ -18,27 +18,21 @@ pub fn search_bar<'a, Message>(
     query: &'a str,
     on_input: impl Fn(String) -> Message + 'a,
     argument_id: Id,
-    argument: &'a str,
+    argument: Option<&'a str>,
     on_argument_input: impl Fn(String) -> Message + 'a,
     icon: Option<Image>,
-    needs_argument: bool,
+    show_argument_input: bool,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let search_input_width = if needs_argument {
-        Length::FillPortion(1)
-    } else {
-        Length::Fill
-    };
-
     let search_input = text_input("Search for apps and commands...", query)
         .on_input(on_input)
         .id(id)
         .size(typo::TITLE_L.0)
         .font(typo::TITLE_L.2)
         .padding(15)
-        .width(search_input_width)
+        .width(Length::FillPortion(1))
         .style(|_theme, _status| text_input::Style {
             background: Color::TRANSPARENT.into(),
             border: iced::Border {
@@ -53,19 +47,20 @@ where
 
     let mut row = Row::new().push(search_input);
 
-    if needs_argument {
+    if show_argument_input {
         if let Some(icon) = icon {
             let icon_handle: IconHandle = icon.into();
             row = row.push(render_icon(icon_handle, icons::MD));
         }
 
-        let argument_input = text_input("Argument...", argument)
+        let argument_input = text_input("Argument...", argument.unwrap_or_default())
             .on_input(on_argument_input)
             .id(argument_id)
             .size(typo::TITLE_L.0)
             .font(typo::TITLE_L.2)
             .padding(15)
-            .width(Length::FillPortion(2))
+            .width(Length::FillPortion(1))
+            .align_x(Alignment::End)
             .style(|_theme, _status| text_input::Style {
                 background: Color::TRANSPARENT.into(),
                 border: iced::Border {
@@ -141,7 +136,6 @@ where
         .style(move |_theme, status| {
             let is_hovered = status == button::Status::Hovered;
 
-            // Move logic for background color here
             let bg_color = if is_selected || is_hovered {
                 colors::ON_SURFACE.scale_alpha(0.1)
             } else {
