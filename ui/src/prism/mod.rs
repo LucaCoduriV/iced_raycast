@@ -198,6 +198,7 @@ impl Prism {
         })
     }
 
+    // Colonne que je dois ajouter la bottom_bar
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
         let selected_entry = self.get_selected_entry();
         let search_section = widgets::search_bar(
