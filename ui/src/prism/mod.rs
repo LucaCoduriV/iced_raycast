@@ -218,13 +218,19 @@ impl Prism {
             .into()
         });
 
+        let bottom_bar = container(iced::widget::text("Open Command"))
+            .width(Length::Fill)
+            .padding(spacing::SPACE_S);
+
         container(column![
             search_section,
             widgets::divider(),
             scrollable(column(list_section))
                 .id(self.state.scroll_id.clone())
                 .on_scroll(PrismEvent::Scrolled)
-                .height(Length::Fill)
+                .height(Length::Fill),
+            widgets::divider(),
+            bottom_bar
         ])
         .width(Length::Fill)
         .height(Length::Fill)
