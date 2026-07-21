@@ -35,11 +35,7 @@ impl Application for MacOSApplication {
         // Hand the UI raw RGBA pixels directly (same as the Windows backend),
         // avoiding a PNG encode/decode round-trip per icon.
         self.inner.icon.as_ref().map(|icon_data| {
-            crate::Image::Rgba(
-                icon_data.width,
-                icon_data.height,
-                icon_data.pixels.clone(),
-            )
+            crate::Image::Rgba(icon_data.width, icon_data.height, icon_data.pixels.clone())
         })
     }
 

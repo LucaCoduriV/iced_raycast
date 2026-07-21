@@ -123,8 +123,10 @@ fn should_include(entry: &DesktopEntry, current_desktops: Option<&[String]>) -> 
     // Respect OnlyShowIn / NotShowIn against the running desktop. When the
     // current desktop is unknown we stay lenient and show the entry.
     if let Some(current) = current_desktops {
-        let in_current =
-            |envs: Vec<&str>| envs.iter().any(|e| current.iter().any(|c| c.eq_ignore_ascii_case(e)));
+        let in_current = |envs: Vec<&str>| {
+            envs.iter()
+                .any(|e| current.iter().any(|c| c.eq_ignore_ascii_case(e)))
+        };
 
         if let Some(only) = entry.only_show_in()
             && !in_current(only)
