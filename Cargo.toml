@@ -7,4 +7,4 @@ default-members = ["ui"]
 [workspace.dependencies]
 thiserror = "2.0"
 anyhow = "1.0"
-rayon = "1.11"
+rayon = "1.12"

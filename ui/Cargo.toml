@@ -16,4 +16,4 @@ core = { path = "../core/" }
 anyhow = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-iced_layershell = "0.14"
+iced_layershell = "0.19"
