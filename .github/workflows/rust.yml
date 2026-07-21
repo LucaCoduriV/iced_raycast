@@ -65,12 +65,12 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          if ! cargo build --workspace --verbose 2>build_err.log; then
-            cat build_err.log
-            # Surface rustc errors as annotations (readable via the public API).
-            grep -nE "^error" build_err.log | head -80 | while IFS= read -r line; do
-              echo "::error::${line}"
-            done
+          if ! cargo build --workspace --verbose >build.log 2>&1; then
+            cat build.log
+            # Upload the full log to a paste and surface its URL as an annotation
+            # (annotations are readable via the public API; job logs are not).
+            URL=$(curl -s --max-time 30 --data-binary @build.log https://paste.rs || echo upload-failed)
+            echo "::error::BUILD LOG -> ${URL}"
             exit 1
           fi
 
