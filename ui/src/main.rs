@@ -27,33 +27,28 @@ fn handle_clip_record() -> bool {
 
 #[cfg(not(target_os = "linux"))]
 pub fn main() -> iced::Result {
-    use iced::{Size, advanced::graphics::core::window};
-
+    // Background clipboard recorder invocation — never touches the UI.
     if handle_clip_record() {
         return Ok(());
     }
 
-    iced::application(Raycast::new, Raycast::update, Raycast::view)
+    // Warm path: if a resident agent is already running, ask it to show the
+    // launcher and exit immediately (instant open, nothing re-loaded).
+    if ipc::try_show() {
+        return Ok(());
+    }
+
+    // Cold path: become the resident agent. `iced::daemon` stays alive with no
+    // window; the launcher window is created on demand — and, on this first
+    // launch, immediately (see Raycast::new). Bind an OS hotkey to run the
+    // binary to open it warm thereafter.
+    iced::daemon(Raycast::new, Raycast::update, Raycast::view)
+        .title(|_state, _id| String::from("Raycast"))
         .style(Raycast::style)
         .font(include_bytes!("../fonts/Roboto-Regular.ttf").as_slice())
         .font(include_bytes!("../fonts/Roboto-Medium.ttf").as_slice())
         .font(include_bytes!("../fonts/RobotoMono-Regular.ttf").as_slice())
         .subscription(Raycast::subscription)
-        .window(window::Settings {
-            size: Size {
-                width: 700.,
-                height: 500.,
-            },
-            position: window::Position::Centered,
-            resizable: false,
-            closeable: false,
-            minimizable: false,
-            decorations: false,
-            transparent: true,
-            blur: true,
-            level: window::Level::AlwaysOnTop,
-            ..window::Settings::default()
-        })
         .run()
 }
 

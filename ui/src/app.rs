@@ -14,19 +14,18 @@ use crate::prism::PrismEvent;
 /// Initial size of the Plugin Manager window (a normal xdg_toplevel on Linux).
 #[cfg(target_os = "linux")]
 const SETTINGS_SIZE: (u32, u32) = (900, 620);
-/// Size of the launcher surface.
-#[cfg(target_os = "linux")]
+/// Size of the launcher surface / window.
 const LAUNCHER_SIZE: (u32, u32) = (700, 500);
 
 pub struct Raycast {
     prism: prism::Prism,
     app_state: AppState,
-    /// The launcher's layer-shell surface while it is shown. On Linux the app is
-    /// a resident process: the surface is created on "show" and destroyed on
-    /// close, but the process (and warm registry) live on.
-    #[cfg(target_os = "linux")]
+    /// The launcher window/surface while it is shown. The app is a resident
+    /// process: the window is created on "show" and destroyed on close, but the
+    /// process (and warm registry) live on.
     launcher: Option<iced::window::Id>,
-    /// The Plugin Manager window while it is open (a normal xdg_toplevel).
+    /// The Plugin Manager window while it is open (a separate xdg_toplevel on
+    /// Linux; elsewhere the manager renders inline in the launcher window).
     #[cfg(target_os = "linux")]
     settings_window: Option<iced::window::Id>,
     /// The `wl-paste --watch` clipboard recorder, owned so it stops when the
@@ -45,7 +44,6 @@ impl Raycast {
         let state = Raycast {
             prism,
             app_state,
-            #[cfg(target_os = "linux")]
             launcher: None,
             #[cfg(target_os = "linux")]
             settings_window: None,
@@ -54,13 +52,12 @@ impl Raycast {
             clipboard_watcher: spawn_clipboard_watcher(),
         };
 
-        let load = prism_task.map(Message::PrismEvent);
-        // On Linux the process boots resident (no surface); show the launcher
-        // immediately for this first invocation. Elsewhere it's a single window.
-        #[cfg(target_os = "linux")]
-        let boot = Task::batch([load, Task::done(Message::Show)]);
-        #[cfg(not(target_os = "linux"))]
-        let boot = load;
+        // The process boots resident (no window); show the launcher immediately
+        // for this first invocation.
+        let boot = Task::batch([
+            prism_task.map(Message::PrismEvent),
+            Task::done(Message::Show),
+        ]);
 
         (state, boot)
     }
@@ -77,29 +74,9 @@ impl Raycast {
                 self.close_launcher()
             }
             Message::ExitApp => self.close_launcher(),
-
-            // --- Resident agent lifecycle (Linux) ---
-            #[cfg(target_os = "linux")]
             Message::Show => self.show_launcher(),
-            #[cfg(target_os = "linux")]
-            Message::QuitAgent => {
-                // Stop recording the clipboard when the agent quits.
-                if let Some(mut child) = self.clipboard_watcher.take() {
-                    let _ = child.kill();
-                }
-                iced::exit()
-            }
-            #[cfg(target_os = "linux")]
-            Message::WindowClosed(id) => {
-                if Some(id) == self.launcher {
-                    self.launcher = None;
-                } else if Some(id) == self.settings_window {
-                    self.settings_window = None;
-                    self.prism.close_plugin_manager();
-                    return self.set_launcher_layer(Layer::Top);
-                }
-                Task::none()
-            }
+            Message::QuitAgent => self.quit_agent(),
+            Message::WindowClosed(id) => self.on_window_closed(id),
             _ => Task::none(),
         }
     }
@@ -126,36 +103,73 @@ impl Raycast {
         }
     }
 
-    /// Close the launcher after acting on it. On Linux this hides the surface but
-    /// keeps the resident process alive; elsewhere it exits the app.
-    #[cfg(target_os = "linux")]
-    fn close_launcher(&mut self) -> Task<Message> {
-        match self.launcher.take() {
-            Some(id) => Task::done(Message::RemoveWindow(id)),
-            None => Task::none(),
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn close_launcher(&mut self) -> Task<Message> {
-        iced::exit()
-    }
-
-    /// Show the launcher: create its surface if it isn't already visible, reset
+    /// Show the launcher: create its window if it isn't already visible, reset
     /// the (warm) launcher state, and focus the search box.
-    #[cfg(target_os = "linux")]
     fn show_launcher(&mut self) -> Task<Message> {
         if self.launcher.is_some() {
             return Task::none(); // already visible
         }
-
         self.prism.reset();
-        let (id, open) = Message::layershell_open(launcher_layer_settings());
-        self.launcher = Some(id);
 
-        // Focus the search once the surface exists.
-        let focus = self.prism.focus_search().map(Message::PrismEvent);
-        Task::batch([open, focus])
+        #[cfg(target_os = "linux")]
+        {
+            let (id, open) = Message::layershell_open(launcher_layer_settings());
+            self.launcher = Some(id);
+            let focus = self.prism.focus_search().map(Message::PrismEvent);
+            Task::batch([open, focus])
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let (id, open) = iced::window::open(launcher_window_settings());
+            self.launcher = Some(id);
+            // Once the window exists, focus it and its search input (Initialized
+            // focuses the search).
+            Task::batch([
+                open.map(|_| Message::PrismEvent(PrismEvent::Initialized)),
+                iced::window::gain_focus(id),
+            ])
+        }
+    }
+
+    /// Close the launcher after acting on it. This hides the window but keeps the
+    /// resident process alive.
+    fn close_launcher(&mut self) -> Task<Message> {
+        let Some(id) = self.launcher.take() else {
+            return Task::none();
+        };
+        #[cfg(target_os = "linux")]
+        {
+            Task::done(Message::RemoveWindow(id))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            iced::window::close(id)
+        }
+    }
+
+    /// Quit the resident agent entirely (e.g. from the tray).
+    fn quit_agent(&mut self) -> Task<Message> {
+        #[cfg(target_os = "linux")]
+        if let Some(mut child) = self.clipboard_watcher.take() {
+            // Stop recording the clipboard when the agent quits.
+            let _ = child.kill();
+        }
+        iced::exit()
+    }
+
+    /// A window was closed: drop our reference so the next "show" recreates it.
+    fn on_window_closed(&mut self, id: iced::window::Id) -> Task<Message> {
+        if Some(id) == self.launcher {
+            self.launcher = None;
+            return Task::none();
+        }
+        #[cfg(target_os = "linux")]
+        if Some(id) == self.settings_window {
+            self.settings_window = None;
+            self.prism.close_plugin_manager();
+            return self.set_launcher_layer(Layer::Top);
+        }
+        Task::none()
     }
 
     /// Route a Prism event, managing the Plugin Manager window on Linux.
@@ -223,23 +237,24 @@ impl Raycast {
                 PrismEvent::ExitApp => Message::ExitApp,
                 _ => Message::PrismEvent(event),
             }),
+            // Resident-agent IPC "show" trigger + window-close notifications.
+            Subscription::run(show_stream),
+            iced::window::close_events().map(Message::WindowClosed),
         ];
 
-        // Resident-agent extras (Linux): the IPC "show" trigger, the tray icon,
-        // and window-close notifications.
+        // The system-tray icon (Linux; ksni). Native trays for Windows/macOS are
+        // still TODO.
         #[cfg(target_os = "linux")]
-        {
-            subscriptions.push(Subscription::run(show_stream));
-            subscriptions.push(crate::tray::subscription());
-            subscriptions.push(iced::window::close_events().map(Message::WindowClosed));
-        }
+        subscriptions.push(crate::tray::subscription());
 
         Subscription::batch(subscriptions)
     }
 
-    /// Multi-window view (Linux): the launcher and the Plugin Manager surfaces.
-    #[cfg(target_os = "linux")]
+    /// Multi-window view: the launcher window, plus (on Linux) the separate
+    /// Plugin Manager window. Elsewhere the manager renders inline in the
+    /// launcher window.
     pub fn view(&self, id: iced::window::Id) -> Element<'_, Message> {
+        #[cfg(target_os = "linux")]
         if Some(id) == self.settings_window {
             return match self.prism.plugin_manager_view() {
                 Some(view) => view.map(Message::PrismEvent),
@@ -247,17 +262,15 @@ impl Raycast {
             };
         }
 
-        // Any other surface is the launcher.
-        container(self.prism.view().map(Message::PrismEvent)).into()
-    }
-
-    /// Single-window view (non-Linux): the manager takes over the window when open.
-    #[cfg(not(target_os = "linux"))]
-    pub fn view(&self) -> Element<'_, Message> {
+        #[cfg(target_os = "linux")]
+        let content = self.prism.view();
+        #[cfg(not(target_os = "linux"))]
         let content = match self.prism.plugin_manager_view() {
             Some(view) => view,
             None => self.prism.view(),
         };
+
+        let _ = id;
         container(content.map(Message::PrismEvent)).into()
     }
 
@@ -340,9 +353,30 @@ fn launcher_layer_settings() -> iced_layershell::reexport::NewLayerShellSettings
     }
 }
 
+/// Window settings for the launcher (non-Linux): a borderless, centered,
+/// always-on-top window. Closing it does not exit the resident daemon.
+#[cfg(not(target_os = "linux"))]
+fn launcher_window_settings() -> iced::window::Settings {
+    iced::window::Settings {
+        size: iced::Size {
+            width: LAUNCHER_SIZE.0 as f32,
+            height: LAUNCHER_SIZE.1 as f32,
+        },
+        position: iced::window::Position::Centered,
+        resizable: false,
+        closeable: false,
+        minimizable: false,
+        decorations: false,
+        transparent: true,
+        blur: true,
+        level: iced::window::Level::AlwaysOnTop,
+        exit_on_close_request: false,
+        ..Default::default()
+    }
+}
+
 /// A subscription that listens on the IPC control socket and emits [`Message::Show`]
 /// whenever a bare invocation asks the resident agent to open the launcher.
-#[cfg(target_os = "linux")]
 fn show_stream() -> impl iced::futures::Stream<Item = Message> {
     use iced::futures::channel::mpsc::Sender;
     iced::stream::channel(4, |output: Sender<Message>| async move {
@@ -369,13 +403,10 @@ pub enum Message {
     PrismEvent(PrismEvent),
     Run,
     ExitApp,
-    /// Show the launcher surface (IPC trigger / first launch).
-    #[cfg(target_os = "linux")]
+    /// Show the launcher window/surface (IPC trigger / first launch).
     Show,
     /// Quit the resident agent entirely (e.g. from the tray).
-    #[cfg(target_os = "linux")]
     QuitAgent,
     /// A window (launcher or Plugin Manager) was closed.
-    #[cfg(target_os = "linux")]
     WindowClosed(iced::window::Id),
 }

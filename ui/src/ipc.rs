@@ -1,12 +1,20 @@
 //! Minimal single-instance IPC.
 //!
-//! A bare `iced_raycast` invocation (e.g. from a compositor keybind) first tries
-//! to reach an already-running resident agent over a local socket and ask it to
-//! show the launcher — a warm, instant open with everything already loaded. Only
-//! if no agent answers does the process become the resident agent itself.
+//! A bare `iced_raycast` invocation (e.g. from a compositor keybind on Linux, or
+//! an OS hotkey that runs the binary on Windows/macOS) first tries to reach an
+//! already-running resident agent and ask it to show the launcher — a warm,
+//! instant open with everything already loaded. Only if no agent answers does
+//! the process become the resident agent itself.
+//!
+//! Transport is a Unix domain socket on unix (Linux + macOS) and a loopback TCP
+//! socket on Windows. All three expose the same `try_show` / `bind` / `serve`.
 
+#[cfg(not(any(unix, windows)))]
+pub use fallback::{bind, serve, try_show};
 #[cfg(unix)]
 pub use unix::{bind, serve, try_show};
+#[cfg(windows)]
+pub use windows_impl::{bind, serve, try_show};
 
 #[cfg(unix)]
 mod unix {
@@ -56,22 +64,46 @@ mod unix {
     }
 }
 
-// TODO(cross-platform): a Windows named-pipe backend so the resident model works
-// there too. Until then, non-unix builds have no resident IPC (each launch is
-// standalone) and fall back to the ephemeral single-window app.
-#[cfg(not(unix))]
-pub use fallback::*;
-#[cfg(not(unix))]
-mod fallback {
-    pub type Listener = ();
+#[cfg(windows)]
+mod windows_impl {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
 
+    // Loopback only, so it's local to the machine. A fixed high port keeps the
+    // client and server in agreement without a discovery step.
+    const ADDR: &str = "127.0.0.1:47727";
+
+    pub fn try_show() -> bool {
+        match TcpStream::connect(ADDR) {
+            Ok(mut stream) => stream.write_all(b"show").is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    /// Binding fails if another agent already holds the port — that's our
+    /// single-instance check.
+    pub fn bind() -> Option<TcpListener> {
+        TcpListener::bind(ADDR).ok()
+    }
+
+    pub fn serve(listener: TcpListener, mut on_show: impl FnMut()) {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut buffer = [0u8; 8];
+            if matches!(stream.read(&mut buffer), Ok(read) if buffer[..read].starts_with(b"show")) {
+                on_show();
+            }
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod fallback {
     pub fn try_show() -> bool {
         false
     }
-
-    pub fn bind() -> Option<Listener> {
+    pub fn bind() -> Option<()> {
         None
     }
-
-    pub fn serve(_listener: Listener, _on_show: impl FnMut()) {}
+    pub fn serve(_listener: (), _on_show: impl FnMut()) {}
 }
