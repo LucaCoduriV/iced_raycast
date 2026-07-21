@@ -66,6 +66,8 @@ impl Entity {
 }
 
 pub fn get_entities() -> Vec<Entity> {
+    // `mut` is only needed for the debug-only fake commands below.
+    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
     let mut entities: Vec<Entity> = App::lookup_applications()
         .into_iter()
         .map(Entity::Application)

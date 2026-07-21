@@ -43,4 +43,8 @@ pub struct PrismState {
     pub default_row_height: f32,
     pub show_argument_input: bool,
     pub is_argument_input_active: bool,
+    pub show_actions: bool,
+    pub actions_selected_index: usize,
+    /// Recent arguments for the command currently in argument mode.
+    pub recent_arguments: Vec<String>,
 }

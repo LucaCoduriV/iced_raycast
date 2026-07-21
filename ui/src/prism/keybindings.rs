@@ -27,10 +27,25 @@ pub enum KeyAction {
     SelectNext,
     Submit,
     EscapePressed,
+    ToggleActions,
 }
 
-pub fn map_key_to_action(key: keyboard::Key) -> Option<KeyAction> {
-    match Key::from(key) {
+pub fn map_key_to_action(
+    key: &keyboard::Key,
+    modifiers: keyboard::Modifiers,
+) -> Option<KeyAction> {
+    // ⌘K / Ctrl+K toggles the actions menu. Other modified chords are ignored
+    // so they don't get misread as list navigation.
+    if modifiers.command() {
+        if let keyboard::Key::Character(c) = key
+            && c.as_str().eq_ignore_ascii_case("k")
+        {
+            return Some(KeyAction::ToggleActions);
+        }
+        return None;
+    }
+
+    match Key::from(key.clone()) {
         Key::ArrowUp => Some(KeyAction::SelectPrevious),
         Key::ArrowDown => Some(KeyAction::SelectNext),
         Key::Enter => Some(KeyAction::Submit),

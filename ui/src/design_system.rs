@@ -45,6 +45,32 @@ pub mod colors {
     pub const OUTLINE_VARIANT: Color = Color::from_rgb8(72, 72, 75);
     pub const ON_SURFACE: Color = Color::from_rgb8(242, 242, 247); // #F2F2F7 (Main Text)
     pub const ON_SURFACE_VARIANT: Color = Color::from_rgb8(174, 174, 178); // #AEAEB2 (Subtext)
+
+    // --- Generated letter tiles (icon fallback) ---
+    /// Palette letter tiles are picked from when an entry has no real icon.
+    pub const TILE_PALETTE: [Color; 10] = [
+        Color::from_rgb8(255, 90, 99),   // red / pink
+        Color::from_rgb8(108, 142, 239), // blue
+        Color::from_rgb8(235, 87, 87),   // red
+        Color::from_rgb8(88, 101, 242),  // indigo
+        Color::from_rgb8(44, 194, 255),  // cyan
+        Color::from_rgb8(255, 113, 57),  // orange
+        Color::from_rgb8(242, 201, 76),  // yellow
+        Color::from_rgb8(124, 58, 237),  // violet
+        Color::from_rgb8(29, 185, 84),   // green
+        Color::from_rgb8(105, 226, 207), // teal
+    ];
+
+    /// Deterministically map a label to a palette color (stable across runs),
+    /// so a given app/command always gets the same tile color. FNV-1a hash.
+    pub fn tile_color(label: &str) -> Color {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in label.bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+        TILE_PALETTE[(hash % TILE_PALETTE.len() as u64) as usize]
+    }
 }
 
 pub mod typo {

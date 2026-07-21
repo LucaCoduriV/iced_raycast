@@ -4,6 +4,8 @@ use std::{path::Path, sync::Arc};
 use anyhow::Result;
 use iced::widget::{image, svg};
 
+use crate::design_system::colors;
+
 #[derive(Clone, Debug)]
 pub struct ListEntry {
     pub entity: Arc<Entity>,
@@ -37,10 +39,12 @@ impl ListEntry {
 
 impl From<Entity> for ListEntry {
     fn from(value: Entity) -> Self {
-        let image_handler: IconHandle = value
-            .icon()
-            .unwrap_or_else(|| core::Image::Path("assets/icon_placeholder.png".to_string()))
-            .into();
+        // Use the real icon when the entity provides one, otherwise fall back
+        // to a generated colored letter tile (rather than a placeholder image).
+        let image_handler = match value.icon() {
+            Some(image) => image.into(),
+            None => IconHandle::letter(value.name()),
+        };
 
         ListEntry {
             entity: Arc::new(value),
@@ -53,6 +57,25 @@ impl From<Entity> for ListEntry {
 pub enum IconHandle {
     Svg(svg::Handle),
     Other(image::Handle),
+    /// A generated fallback tile: an uppercase initial on a colored square.
+    Letter { letter: char, color: iced::Color },
+}
+
+impl IconHandle {
+    /// Build a letter tile from a label: its uppercased initial on a color
+    /// deterministically derived from the label.
+    pub fn letter(label: &str) -> Self {
+        let letter = label
+            .chars()
+            .next()
+            .map(|c| c.to_ascii_uppercase())
+            .unwrap_or('?');
+
+        IconHandle::Letter {
+            letter,
+            color: colors::tile_color(label),
+        }
+    }
 }
 
 impl From<core::Image> for IconHandle {

@@ -39,11 +39,16 @@ impl Raycast {
             Message::Run => {
                 if let Some(entry) = self.prism.get_selected_entry().cloned() {
                     self.app_state.record_usage(&entry.entry.entity);
+
+                    let argument = self.prism.get_argument();
+                    if let Some(arg) = argument.as_deref().filter(|a| !a.is_empty()) {
+                        self.app_state.record_argument(entry.entry.name(), arg);
+                    }
+
                     if let Err(e) = self.app_state.save() {
                         eprintln!("Failed to save state: {}", e);
                     }
 
-                    let argument = self.prism.get_argument();
                     if let Err(e) = entry.entry.execute(argument) {
                         eprintln!("Failed to launch: {}", e);
                     }
