@@ -12,20 +12,35 @@ use crate::{
     prism::items::{IconHandle, ListEntry},
 };
 
+/// Inputs for [`search_bar`]. Grouped into a struct so call sites read as
+/// named fields rather than a long positional argument list.
+pub struct SearchBar<'a, Message> {
+    pub id: Id,
+    pub query: &'a str,
+    pub on_input: Box<dyn Fn(String) -> Message + 'a>,
+    pub argument_id: Id,
+    pub argument: Option<&'a str>,
+    pub on_argument_input: Box<dyn Fn(String) -> Message + 'a>,
+    pub icon: Option<Image>,
+    pub show_argument_input: bool,
+}
+
 /// A specialized search input with transparent styling
-pub fn search_bar<'a, Message>(
-    id: Id,
-    query: &'a str,
-    on_input: impl Fn(String) -> Message + 'a,
-    argument_id: Id,
-    argument: Option<&'a str>,
-    on_argument_input: impl Fn(String) -> Message + 'a,
-    icon: Option<Image>,
-    show_argument_input: bool,
-) -> Element<'a, Message>
+pub fn search_bar<'a, Message>(props: SearchBar<'a, Message>) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
+    let SearchBar {
+        id,
+        query,
+        on_input,
+        argument_id,
+        argument,
+        on_argument_input,
+        icon,
+        show_argument_input,
+    } = props;
+
     let search_input = text_input("Search for apps and commands...", query)
         .on_input(on_input)
         .id(id)

@@ -5,26 +5,12 @@ use crate::{AppState, Entity};
 pub struct SearchEngine;
 
 impl SearchEngine {
-    pub fn matches(entity: &Entity, query: &str) -> bool {
-        if query.is_empty() {
-            return true;
-        }
-
-        let query_lower = query.to_lowercase();
-
-        // Check name
-        if entity.name().to_lowercase().contains(&query_lower) {
-            return true;
-        }
-
-        // Check description
-        if let Some(desc) = entity.description()
-            && desc.to_lowercase().contains(&query_lower)
-        {
-            return true;
-        }
-
-        false
+    /// Matches a precomputed, already-lowercased haystack against an
+    /// already-lowercased query. Both sides are lowercased once by the caller
+    /// (haystack at load time, query once per keystroke) to keep the filter
+    /// hot path allocation-free.
+    pub fn matches(haystack: &str, query_lower: &str) -> bool {
+        query_lower.is_empty() || haystack.contains(query_lower)
     }
 
     pub fn compare(a: &Entity, b: &Entity, app_state: &AppState) -> Ordering {

@@ -7,13 +7,23 @@ use iced::widget::Id;
 pub struct PrismEntry {
     pub entry: ListEntry,
     pub id: Id,
+    /// Lowercased "name\ndescription", precomputed once so the per-keystroke
+    /// filter is a plain substring check with no allocation.
+    pub search_haystack: String,
 }
 
 impl From<ListEntry> for PrismEntry {
     fn from(entry: ListEntry) -> Self {
+        let mut search_haystack = entry.name().to_lowercase();
+        if let Some(desc) = entry.description() {
+            search_haystack.push('\n');
+            search_haystack.push_str(&desc.to_lowercase());
+        }
+
         Self {
             entry,
             id: Id::unique(),
+            search_haystack,
         }
     }
 }

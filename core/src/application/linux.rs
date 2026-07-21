@@ -1,11 +1,14 @@
 use std::{
+    collections::HashSet,
     os::unix::process::CommandExt,
     path::Path,
     process::{Command, Stdio},
 };
 
 use anyhow::{Context, Result};
-use freedesktop_desktop_entry::{DesktopEntry, desktop_entries, get_languages_from_env};
+use freedesktop_desktop_entry::{
+    DesktopEntry, current_desktop, desktop_entries, get_languages_from_env,
+};
 use linicon::lookup_icon;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use which::which;
@@ -51,28 +54,18 @@ fn get_terminal() -> Option<&'static TerminalProfile> {
 #[derive(Debug, Clone)]
 pub struct LinuxApplication {
     name: String,
+    description: Option<String>,
     exec: Vec<String>,
+    working_dir: Option<String>,
     icon_path: Option<String>,
     is_terminal: bool,
 }
 
 impl LinuxApplication {
     fn from_desktop_entry(entry: &DesktopEntry, locales: &[String]) -> Option<Self> {
-        let exec_raw = entry.exec()?;
-
-        let exec: Vec<String> = exec_raw
-            .split_whitespace()
-            .map(|s| {
-                s.replace("%f", "")
-                    .replace("%F", "")
-                    .replace("%u", "")
-                    .replace("%U", "")
-                    .replace("%i", "")
-                    .replace("%c", "")
-                    .replace("%k", "")
-            })
-            .filter(|s| !s.is_empty())
-            .collect();
+        // Spec-compliant parsing: honours quoting and expands/strips field
+        // codes (%f, %u, %i, ...) instead of naively splitting on whitespace.
+        let exec = entry.parse_exec().ok()?;
 
         if exec.is_empty() {
             return None;
@@ -83,17 +76,79 @@ impl LinuxApplication {
             .map(|cow| cow.into_owned())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let icon_path = entry.icon().and_then(find_icon).or_else(|| {
-            println!("{} | {:?}", name, entry.icon());
-            None
-        });
+        // Prefer the human-friendly Comment, falling back to GenericName
+        // (e.g. "Web Browser") so entries always carry a useful subtitle.
+        let description = entry
+            .comment(locales)
+            .or_else(|| entry.generic_name(locales))
+            .map(|cow| cow.into_owned())
+            .filter(|s| !s.is_empty());
+
+        let icon_path = entry.icon().and_then(find_icon);
 
         Some(LinuxApplication {
             name,
+            description,
             exec,
+            working_dir: entry.path().map(str::to_string).filter(|s| !s.is_empty()),
             icon_path,
             is_terminal: entry.terminal(),
         })
+    }
+}
+
+/// Whether a desktop entry should surface as a launchable application,
+/// following the freedesktop desktop-entry visibility rules.
+fn should_include(entry: &DesktopEntry, current_desktops: Option<&[String]>) -> bool {
+    // Only real applications are launchable (skip Link / Directory entries).
+    // Entries omitting Type are treated leniently.
+    if let Some(kind) = entry.type_()
+        && kind != "Application"
+    {
+        return false;
+    }
+
+    // NoDisplay = "don't show in menus"; Hidden = "treat as deleted".
+    if entry.no_display() || entry.hidden() {
+        return false;
+    }
+
+    // TryExec names a binary that must exist for the entry to be usable.
+    if let Some(try_exec) = entry.try_exec()
+        && !try_exec_available(try_exec)
+    {
+        return false;
+    }
+
+    // Respect OnlyShowIn / NotShowIn against the running desktop. When the
+    // current desktop is unknown we stay lenient and show the entry.
+    if let Some(current) = current_desktops {
+        let in_current =
+            |envs: Vec<&str>| envs.iter().any(|e| current.iter().any(|c| c.eq_ignore_ascii_case(e)));
+
+        if let Some(only) = entry.only_show_in()
+            && !in_current(only)
+        {
+            return false;
+        }
+
+        if let Some(not) = entry.not_show_in()
+            && in_current(not)
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// A `TryExec` value is satisfied if it resolves to an existing executable:
+/// an absolute/relative path that exists, or a bare name found on `PATH`.
+fn try_exec_available(try_exec: &str) -> bool {
+    if try_exec.contains('/') {
+        Path::new(try_exec).exists()
+    } else {
+        which(try_exec).is_ok()
     }
 }
 
@@ -152,7 +207,7 @@ impl Application for LinuxApplication {
     }
 
     fn description(&self) -> Option<&str> {
-        None
+        self.description.as_deref()
     }
 
     fn execute(&self, _arg: Option<String>) -> Result<()> {
@@ -181,6 +236,10 @@ impl Application for LinuxApplication {
             c
         };
 
+        if let Some(dir) = &self.working_dir {
+            cmd.current_dir(dir);
+        }
+
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -202,17 +261,32 @@ impl Application for LinuxApplication {
         Self: Sized,
     {
         let locales = get_languages_from_env();
+        let current_desktops = current_desktop();
 
-        let entries = desktop_entries(&locales);
+        // `desktop_entries` yields every .desktop file across all XDG data
+        // dirs in precedence order (XDG_DATA_HOME first). Filter for visible
+        // applications, then keep only the first entry seen per app id so a
+        // user override in ~/.local/share shadows the system copy.
+        let mut seen_ids = HashSet::new();
+        let visible: Vec<DesktopEntry> = desktop_entries(&locales)
+            .into_iter()
+            .filter(|entry| should_include(entry, current_desktops.as_deref()))
+            .filter(|entry| seen_ids.insert(entry.id().to_string()))
+            .collect();
 
-        entries
+        // Icon resolution touches the filesystem per entry, so parallelise it.
+        // `collect` preserves the precedence order established above.
+        let apps: Vec<LinuxApplication> = visible
             .into_par_iter()
-            .filter_map(|entry| {
-                if entry.no_display() {
-                    return None;
-                }
-                LinuxApplication::from_desktop_entry(&entry, &locales)
-            })
+            .filter_map(|entry| LinuxApplication::from_desktop_entry(&entry, &locales))
+            .collect();
+
+        // Collapse entries that are indistinguishable to the user — same
+        // display name launching the same command (e.g. `google-chrome` and
+        // `google-chrome-stable`). Distinct ids with differing commands stay.
+        let mut seen = HashSet::new();
+        apps.into_iter()
+            .filter(|app| seen.insert((app.name.clone(), app.exec.clone())))
             .collect()
     }
 }
@@ -221,10 +295,27 @@ impl Application for LinuxApplication {
 mod test {
     use super::LinuxApplication;
     use crate::application::Application;
+    use std::collections::HashSet;
 
     #[test]
     fn get_applications() {
         let apps = LinuxApplication::lookup_applications();
-        println!("{:?}", apps.len());
+        println!("discovered {} applications", apps.len());
+
+        // No two surfaced apps should share a display name + command.
+        let unique: HashSet<(&str, &Vec<String>)> =
+            apps.iter().map(|a| (a.name(), &a.exec)).collect();
+        assert_eq!(
+            unique.len(),
+            apps.len(),
+            "duplicate applications were not collapsed"
+        );
+
+        let with_desc = apps.iter().filter(|a| a.description().is_some()).count();
+        println!("{with_desc} of them carry a description");
+
+        for app in apps.iter().take(5) {
+            println!("- {} — {:?}", app.name(), app.description());
+        }
     }
 }

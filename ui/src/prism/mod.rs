@@ -85,11 +85,12 @@ impl Prism {
                 self.state.argument = None;
                 self.state.show_argument_input = false;
                 self.state.is_argument_input_active = false;
+                let query_lower = self.state.query.to_lowercase();
                 self.state.entries = self
                     .state
                     .all_entries
                     .iter()
-                    .filter(|e| SearchEngine::matches(&e.entry.entity, &self.state.query))
+                    .filter(|e| SearchEngine::matches(&e.search_haystack, &query_lower))
                     .cloned()
                     .collect();
 
@@ -196,16 +197,16 @@ impl Prism {
 
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
         let selected_entry = self.get_selected_entry();
-        let search_section = widgets::search_bar(
-            self.state.search_id.clone(),
-            &self.state.query,
-            PrismEvent::SearchInput,
-            self.state.argument_id.clone(),
-            self.state.argument.as_deref(),
-            PrismEvent::ArgumentInput,
-            selected_entry.and_then(|e| e.entry.entity.icon()),
-            self.state.show_argument_input,
-        );
+        let search_section = widgets::search_bar(widgets::SearchBar {
+            id: self.state.search_id.clone(),
+            query: &self.state.query,
+            on_input: Box::new(PrismEvent::SearchInput),
+            argument_id: self.state.argument_id.clone(),
+            argument: self.state.argument.as_deref(),
+            on_argument_input: Box::new(PrismEvent::ArgumentInput),
+            icon: selected_entry.and_then(|e| e.entry.entity.icon()),
+            show_argument_input: self.state.show_argument_input,
+        });
 
         let list_section = self.state.entries.iter().enumerate().map(|(i, entry)| {
             container(widgets::list_item(

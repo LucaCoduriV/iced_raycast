@@ -32,23 +32,14 @@ impl Application for MacOSApplication {
     }
 
     fn icon(&self) -> Option<crate::Image> {
+        // Hand the UI raw RGBA pixels directly (same as the Windows backend),
+        // avoiding a PNG encode/decode round-trip per icon.
         self.inner.icon.as_ref().map(|icon_data| {
-            // Option A: If your UI handles raw RGBA pixels
-            // Image::Data(icon_data.data.clone())
-
-            // Option B: Convert raw pixels to encoded PNG bytes (Most common for UI kits)
-            let mut png_bytes: Vec<u8> = Vec::new();
-            let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-
-            let _ = image::ImageEncoder::write_image(
-                encoder,
-                &icon_data.pixels,
+            crate::Image::Rgba(
                 icon_data.width,
                 icon_data.height,
-                image::ExtendedColorType::Rgba8,
-            );
-
-            crate::Image::Data(png_bytes)
+                icon_data.pixels.clone(),
+            )
         })
     }
 

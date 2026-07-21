@@ -47,7 +47,8 @@ impl Entity {
         match self {
             Entity::Application(app) => app.execute(argument),
             Entity::Command(cmd) => {
-                println!(
+                // TODO: dispatch to the owning plugin once the plugin system lands.
+                eprintln!(
                     "Executing command {} with argument {:?}",
                     cmd.name, argument
                 );
@@ -70,40 +71,41 @@ pub fn get_entities() -> Vec<Entity> {
         .map(Entity::Application)
         .collect();
 
-    let mut command_id_counter = 0;
-
-    let fake_command_1 = CommandEntity {
-        id: command_id_counter,
-        name: "Fake Command One".to_string(),
-        alias: None,
-        description: Some("This is the first fake command.".to_string()),
-        image: None,
-        needs_argument: false,
-    };
-    command_id_counter += 1;
-
-    let fake_command_2 = CommandEntity {
-        id: command_id_counter,
-        name: "Fake Command Two".to_string(),
-        alias: Some("fct".to_string()),
-        description: Some("This is the second fake command, with an alias.".to_string()),
-        image: None,
-        needs_argument: false,
-    };
-    command_id_counter += 1;
-
-    let fake_command_3 = CommandEntity {
-        id: command_id_counter,
-        name: "Fake Command Three".to_string(),
-        alias: None,
-        description: Some("A third example of a fake command.".to_string()),
-        image: None,
-        needs_argument: true, // This one needs an argument
-    };
-
-    entities.push(Entity::Command(fake_command_1));
-    entities.push(Entity::Command(fake_command_2));
-    entities.push(Entity::Command(fake_command_3));
+    // Placeholder commands used to exercise the UI (including the
+    // needs-argument flow) while the plugin system is being built. Excluded
+    // from release builds so they never ship as real entries.
+    #[cfg(debug_assertions)]
+    entities.extend(fake_commands());
 
     entities
+}
+
+#[cfg(debug_assertions)]
+fn fake_commands() -> Vec<Entity> {
+    vec![
+        Entity::Command(CommandEntity {
+            id: 0,
+            name: "Fake Command One".to_string(),
+            alias: None,
+            description: Some("This is the first fake command.".to_string()),
+            image: None,
+            needs_argument: false,
+        }),
+        Entity::Command(CommandEntity {
+            id: 1,
+            name: "Fake Command Two".to_string(),
+            alias: Some("fct".to_string()),
+            description: Some("This is the second fake command, with an alias.".to_string()),
+            image: None,
+            needs_argument: false,
+        }),
+        Entity::Command(CommandEntity {
+            id: 2,
+            name: "Fake Command Three".to_string(),
+            alias: None,
+            description: Some("A third example of a fake command.".to_string()),
+            image: None,
+            needs_argument: true, // This one needs an argument
+        }),
+    ]
 }

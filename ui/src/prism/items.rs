@@ -37,34 +37,14 @@ impl ListEntry {
 
 impl From<Entity> for ListEntry {
     fn from(value: Entity) -> Self {
-        let image_handler = match value
+        let image_handler: IconHandle = value
             .icon()
-            .unwrap_or(core::Image::Path("assets/icon_placeholder.png".to_string()))
-        {
-            core::Image::Bytes(bytes) => {
-                IconHandle::Other(image::Handle::from_bytes(bytes.clone()))
-            }
-            core::Image::Rgba(width, height, pixels) => {
-                IconHandle::Other(image::Handle::from_rgba(width, height, pixels))
-            }
-            core::Image::Path(path) => {
-                let path_obj = Path::new(&path);
-                match path_obj.extension().and_then(|s| s.to_str()) {
-                    Some("svg") => IconHandle::Svg(svg::Handle::from_path(path_obj)),
-                    _ => IconHandle::Other(image::Handle::from_path(path_obj)),
-                }
-            }
-        };
+            .unwrap_or_else(|| core::Image::Path("assets/icon_placeholder.png".to_string()))
+            .into();
 
-        match &value {
-            Entity::Application(_) => ListEntry {
-                entity: Arc::new(value),
-                image_handler,
-            },
-            Entity::Command(_) => ListEntry {
-                entity: Arc::new(value),
-                image_handler,
-            },
+        ListEntry {
+            entity: Arc::new(value),
+            image_handler,
         }
     }
 }
@@ -78,9 +58,7 @@ pub enum IconHandle {
 impl From<core::Image> for IconHandle {
     fn from(value: core::Image) -> Self {
         match value {
-            core::Image::Bytes(bytes) => {
-                IconHandle::Other(image::Handle::from_bytes(bytes.clone()))
-            }
+            core::Image::Bytes(bytes) => IconHandle::Other(image::Handle::from_bytes(bytes)),
             core::Image::Rgba(width, height, pixels) => {
                 IconHandle::Other(image::Handle::from_rgba(width, height, pixels))
             }

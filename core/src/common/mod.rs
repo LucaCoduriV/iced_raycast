@@ -33,7 +33,7 @@ impl AppState {
 
         // Ensure the directory exists
         fs::create_dir_all(data_dir).ok();
-        data_dir.join("state.json")
+        data_dir.join("state.toml")
     }
 
     pub fn record_usage(&mut self, entity: &super::Entity) {
@@ -57,7 +57,8 @@ impl AppState {
     pub fn load() -> Self {
         let path = Self::get_path();
         fs::read_to_string(path)
-            .map(|content| toml::from_str(&content).expect("Couldn't read settings"))
+            .ok()
+            .and_then(|content| toml::from_str(&content).ok())
             .unwrap_or_default()
     }
 
@@ -69,8 +70,8 @@ impl AppState {
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let path = Self::get_path();
-        let json = toml::to_string_pretty(self)?;
-        fs::write(path, json)?;
+        let contents = toml::to_string_pretty(self)?;
+        fs::write(path, contents)?;
         Ok(())
     }
 }
