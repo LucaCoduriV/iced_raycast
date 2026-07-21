@@ -63,7 +63,16 @@ jobs:
             libgl1-mesa-dev
 
       - name: Build
-        run: cargo build --workspace --verbose
+        shell: bash
+        run: |
+          if ! cargo build --workspace --verbose 2>build_err.log; then
+            cat build_err.log
+            # Surface rustc errors as annotations (readable via the public API).
+            grep -nE "^error" build_err.log | head -80 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit 1
+          fi
 
       - name: Test
         run: cargo test --workspace --verbose
