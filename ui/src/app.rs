@@ -41,11 +41,14 @@ impl Raycast {
                     // Plugin results act through an effect (e.g. copy the
                     // calculator answer) rather than launching a process.
                     if let Some(effect) = entry.entry.entity.primary_effect() {
-                        return match effect {
+                        match effect {
                             core::ActionEffect::CopyToClipboard(text) => {
-                                Task::batch(vec![iced::clipboard::write(text), iced::exit()])
+                                if let Err(e) = core::clipboard::copy(&text) {
+                                    eprintln!("Failed to copy to clipboard: {}", e);
+                                }
                             }
-                        };
+                        }
+                        return iced::exit();
                     }
 
                     self.app_state.record_usage(&entry.entry.entity);

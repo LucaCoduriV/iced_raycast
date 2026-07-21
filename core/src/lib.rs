@@ -8,6 +8,7 @@ pub use application::Application;
 pub use common::AppState;
 
 mod application;
+pub mod clipboard;
 mod common;
 mod plugins;
 pub mod search;

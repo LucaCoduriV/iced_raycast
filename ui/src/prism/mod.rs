@@ -253,8 +253,8 @@ impl Prism {
                     Some((widgets::MenuActionKind::Primary, _)) => {
                         self.update(PrismEvent::Submit, app_state)
                     }
-                    Some((widgets::MenuActionKind::CopyName, name)) => iced::clipboard::write(name),
-                    Some((widgets::MenuActionKind::Copy(text), _)) => iced::clipboard::write(text),
+                    Some((widgets::MenuActionKind::CopyName, name)) => copy_and_exit(&name),
+                    Some((widgets::MenuActionKind::Copy(text), _)) => copy_and_exit(&text),
                     None => Task::none(),
                 }
             }
@@ -468,6 +468,14 @@ fn measure_item(id: Id) -> Task<PrismEvent> {
         })
     });
     operate(operation)
+}
+
+/// Copy `text` to the clipboard (persisting past exit) and close the launcher.
+fn copy_and_exit(text: &str) -> Task<PrismEvent> {
+    if let Err(e) = core::clipboard::copy(text) {
+        eprintln!("Failed to copy to clipboard: {}", e);
+    }
+    Task::done(PrismEvent::ExitApp)
 }
 
 /// Approximate height of a `section_header` row, used to offset scroll math
