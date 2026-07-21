@@ -8,8 +8,13 @@
 //! onto the same interface over time.
 
 mod calculator;
+mod clipboard_history;
 mod loader;
 
+pub use clipboard_history::{
+    clear_history as clear_clipboard_history, record as record_clipboard,
+    recording_enabled as clipboard_recording_enabled, set_recording as set_clipboard_recording,
+};
 pub use loader::plugins_dir;
 
 use crate::common::Image;
@@ -104,6 +109,10 @@ pub enum ViewBody {
         columns: u32,
         items: Vec<GridItem>,
     },
+    /// A vertical list of text rows (e.g. clipboard history, snippets).
+    List {
+        items: Vec<ListRow>,
+    },
     Detail {
         body: String,
         metadata: Vec<KeyValue>,
@@ -111,6 +120,17 @@ pub enum ViewBody {
     Form {
         fields: Vec<FormField>,
     },
+}
+
+/// A row in a [`ViewBody::List`].
+#[derive(Debug, Clone)]
+pub struct ListRow {
+    /// Stable id echoed back to the plugin when this row is activated.
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    /// Optional single-character glyph for the row's leading tile.
+    pub glyph: Option<char>,
 }
 
 /// A cell in a grid view.
@@ -203,6 +223,53 @@ pub enum ViewResponse {
     Effect(ActionEffect),
 }
 
+/// Descriptive metadata a plugin declares about itself, shown in the Plugin
+/// Manager. Absent fields fall back to host-derived defaults.
+#[derive(Debug, Clone, Default)]
+pub struct PluginMeta {
+    pub name: Option<String>,
+    pub author: Option<String>,
+    pub version: Option<String>,
+    pub description: Option<String>,
+}
+
+/// A user-facing preference a plugin exposes in its settings section.
+#[derive(Debug, Clone)]
+pub struct Preference {
+    pub id: String,
+    pub label: String,
+    pub hint: String,
+    pub kind: PreferenceKind,
+}
+
+/// The control (and current value) of a [`Preference`].
+#[derive(Debug, Clone)]
+pub enum PreferenceKind {
+    Toggle(bool),
+    Select { options: Vec<String>, selected: u64 },
+    Text(String),
+    Secret(String),
+}
+
+/// A concrete preference value: the persisted state of a [`Preference`], and
+/// what is pushed to a plugin via [`Plugin::set_preference`]. Serialized
+/// untagged (a bare bool / integer / string) so it stays TOML-friendly.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum PreferenceValue {
+    Toggle(bool),
+    Choice(u64),
+    Text(String),
+}
+
+/// Install-time facts about a dynamically-loaded plugin's library file. Not
+/// declared by the plugin — derived host-side from the `.so`/`.dll`/`.dylib`.
+#[derive(Debug, Clone)]
+pub struct InstallInfo {
+    pub size_bytes: u64,
+    pub modified: Option<std::time::SystemTime>,
+}
+
 /// A source of launcher functionality: static commands, live query results, and
 /// interactive views.
 pub trait Plugin: Send + Sync {
@@ -228,6 +295,26 @@ pub trait Plugin: Send + Sync {
     fn handle_event(&self, _event: ViewEvent) -> ViewResponse {
         ViewResponse::None
     }
+
+    /// Descriptive metadata shown in the Plugin Manager.
+    fn metadata(&self) -> PluginMeta {
+        PluginMeta::default()
+    }
+
+    /// User-facing preferences shown in the plugin's settings section.
+    fn preferences(&self) -> Vec<Preference> {
+        Vec::new()
+    }
+
+    /// Notify the plugin that preference `id` changed to `value` (also called on
+    /// startup to rehydrate persisted values).
+    fn set_preference(&self, _id: &str, _value: PreferenceValue) {}
+
+    /// Install-time facts about this plugin's library file, if it is a
+    /// dynamically-loaded plugin (built-ins return `None`).
+    fn install_info(&self) -> Option<InstallInfo> {
+        None
+    }
 }
 
 /// Holds the active plugins and fans a query out to all of them.
@@ -240,7 +327,10 @@ impl PluginRegistry {
     /// installed in the [`plugins_dir`].
     pub fn with_builtins() -> Self {
         let mut registry = Self {
-            plugins: vec![Box::new(calculator::Calculator::new())],
+            plugins: vec![
+                Box::new(calculator::Calculator::new()),
+                Box::new(clipboard_history::ClipboardHistory::new()),
+            ],
         };
 
         if let Some(dir) = plugins_dir() {
@@ -255,6 +345,12 @@ impl PluginRegistry {
     /// Register an additional plugin.
     pub fn register(&mut self, plugin: Box<dyn Plugin>) {
         self.plugins.push(plugin);
+    }
+
+    /// The id of every registered plugin, in registration order. Includes
+    /// query-only plugins (e.g. the calculator) that contribute no commands.
+    pub fn plugin_ids(&self) -> Vec<String> {
+        self.plugins.iter().map(|p| p.id().to_string()).collect()
     }
 
     /// Every static command from every plugin, tagged with its plugin id.
@@ -291,6 +387,39 @@ impl PluginRegistry {
             .iter()
             .flat_map(|plugin| plugin.query(query))
             .collect()
+    }
+
+    /// A plugin's self-declared metadata, by id.
+    pub fn metadata(&self, plugin_id: &str) -> Option<PluginMeta> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.id() == plugin_id)
+            .map(|plugin| plugin.metadata())
+    }
+
+    /// A plugin's user-facing preferences, by id (empty if unknown).
+    pub fn preferences(&self, plugin_id: &str) -> Vec<Preference> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.id() == plugin_id)
+            .map(|plugin| plugin.preferences())
+            .unwrap_or_default()
+    }
+
+    /// Push a changed (or rehydrated) preference value to its owning plugin.
+    pub fn set_preference(&self, plugin_id: &str, pref_id: &str, value: PreferenceValue) {
+        if let Some(plugin) = self.plugins.iter().find(|plugin| plugin.id() == plugin_id) {
+            plugin.set_preference(pref_id, value);
+        }
+    }
+
+    /// Install-time facts about a plugin's library file, by id (`None` for
+    /// built-ins or unknown plugins).
+    pub fn install_info(&self, plugin_id: &str) -> Option<InstallInfo> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.id() == plugin_id)
+            .and_then(|plugin| plugin.install_info())
     }
 
     /// Route a view event to its owning plugin (by id) and return the response.

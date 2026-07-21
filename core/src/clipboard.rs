@@ -51,6 +51,58 @@ fn candidates() -> Vec<(&'static str, &'static [&'static str])> {
     vec![("clip", &[])]
 }
 
+/// Read the current text contents of the system clipboard, or `None` if it is
+/// empty, non-text, or no helper is available.
+pub fn paste() -> Option<String> {
+    for (program, args) in paste_candidates() {
+        if let Some(text) = spawn_paste(program, args) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn paste_candidates() -> Vec<(&'static str, &'static [&'static str])> {
+    let wl_paste: (&str, &[&str]) = ("wl-paste", &["--no-newline"]);
+    let xclip: (&str, &[&str]) = ("xclip", &["-selection", "clipboard", "-o"]);
+    let xsel: (&str, &[&str]) = ("xsel", &["--clipboard", "--output"]);
+
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        vec![wl_paste, xclip, xsel]
+    } else {
+        vec![xclip, xsel, wl_paste]
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn paste_candidates() -> Vec<(&'static str, &'static [&'static str])> {
+    vec![("pbpaste", &[])]
+}
+
+#[cfg(target_os = "windows")]
+fn paste_candidates() -> Vec<(&'static str, &'static [&'static str])> {
+    vec![("powershell", &["-NoProfile", "-Command", "Get-Clipboard"])]
+}
+
+/// Run a paste helper and return its stdout as text, or `None` if it failed,
+/// produced non-UTF-8 (e.g. an image), or was empty.
+fn spawn_paste(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8(output.stdout).ok()?;
+    (!text.is_empty()).then_some(text)
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;

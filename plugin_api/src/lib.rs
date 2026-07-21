@@ -263,6 +263,65 @@ pub enum AbiViewResponse {
     Effect(AbiActionEffect),
 }
 
+/// Descriptive metadata a plugin declares about itself, shown in the Plugin
+/// Manager. Empty fields fall back to host-derived defaults (e.g. the name is
+/// derived from the plugin id).
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone, Default)]
+pub struct AbiPluginMeta {
+    /// Human-readable display name (e.g. "Google Search").
+    pub name: RString,
+    /// Author or maintainer.
+    pub author: RString,
+    /// Version string (e.g. "1.2.0").
+    pub version: RString,
+    /// One or two sentences describing what the plugin does.
+    pub description: RString,
+}
+
+/// A user-facing preference a plugin exposes in its settings section.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiPreference {
+    /// Stable id (echoed back if the host later reports a change).
+    pub id: RString,
+    /// Short label shown for the row.
+    pub label: RString,
+    /// Secondary explanatory text.
+    pub hint: RString,
+    /// The control and its current value.
+    pub kind: AbiPreferenceKind,
+}
+
+/// A concrete preference value, sent to the plugin when the user changes it.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiPreferenceValue {
+    /// New state of a [`AbiPreferenceKind::Toggle`].
+    Toggle(bool),
+    /// New selected index of a [`AbiPreferenceKind::Select`].
+    Choice(u64),
+    /// New text of a [`AbiPreferenceKind::Text`] or [`AbiPreferenceKind::Secret`].
+    Text(RString),
+}
+
+/// The control (and current value) of a [`AbiPreference`].
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiPreferenceKind {
+    /// An on/off switch.
+    Toggle(bool),
+    /// One-of-many choice: the options and the selected index.
+    Select {
+        options: RVec<RString>,
+        selected: u64,
+    },
+    /// A free-text value.
+    Text(RString),
+    /// A masked secret value (rendered obscured).
+    Secret(RString),
+}
+
 /// The interface a plugin implements. Object-safe and FFI-safe via
 /// [`abi_stable`]'s `sabi_trait`, producing the `HostPlugin_TO` trait object.
 #[sabi_trait]
@@ -295,6 +354,25 @@ pub trait HostPlugin: Send + Sync {
     fn handle_event(&self, event: AbiViewEvent) -> AbiViewResponse {
         let _ = event;
         AbiViewResponse::None
+    }
+
+    /// Descriptive metadata shown in the Plugin Manager. The default is empty;
+    /// the host derives a display name from the id and fills other gaps.
+    fn metadata(&self) -> AbiPluginMeta {
+        AbiPluginMeta::default()
+    }
+
+    /// User-facing preferences shown in the plugin's settings section. The
+    /// default is none.
+    fn preferences(&self) -> RVec<AbiPreference> {
+        RVec::new()
+    }
+
+    /// Notify the plugin that the user changed the preference `id` to `value`.
+    /// Called on startup for each persisted value (to rehydrate the plugin) and
+    /// whenever the value changes. The default ignores it.
+    fn set_preference(&self, id: RStr<'_>, value: AbiPreferenceValue) {
+        let _ = (id, value);
     }
 }
 

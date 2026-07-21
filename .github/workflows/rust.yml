@@ -10,34 +10,60 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  # Auto-format on Linux (preserves the previous behaviour). Only on direct
+  # pushes to master, so it doesn't rewrite PR branches mid-review.
+  format:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    # Crucial: This gives the action permission to push commits to your repo
     permissions:
       contents: write
-
     steps:
-    - uses: actions/checkout@v4
-      with:
-        # Check out the actual branch (not a detached head) to allow committing
-        ref: ${{ github.head_ref }}
+      - uses: actions/checkout@v4
+        with:
+          # Check out the actual branch (not a detached head) to allow committing.
+          ref: ${{ github.head_ref }}
+      - name: Install Rust toolchain (nightly — required for the bindeps feature)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - name: Format code
+        run: cargo fmt --all
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: automated rustfmt"
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt
+  # Build + test on every target OS. This is what makes the Windows/macOS code
+  # paths verifiable — a compile failure on any platform fails CI.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Format code
-      run: cargo fmt --all
+      - name: Install Rust toolchain (nightly — required for the bindeps feature)
+        uses: dtolnay/rust-toolchain@nightly
 
-    # This step checks if files changed. If they did, it commits them.
-    - name: Commit changes
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "style: automated rustfmt"
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
-    - name: Build
-      run: cargo build --verbose
+      # Linux needs the Wayland / X11 / xkbcommon dev libraries to build iced +
+      # iced_layershell. (macOS and Windows build against their system SDKs.)
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwayland-dev libxkbcommon-dev \
+            libx11-dev libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libgl1-mesa-dev
 
-    - name: Run tests
-      run: cargo test --verbose
+      - name: Build
+        run: cargo build --workspace --verbose
+
+      - name: Test
+        run: cargo test --workspace --verbose

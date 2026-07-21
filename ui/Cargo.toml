@@ -17,6 +17,11 @@ anyhow = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 iced_layershell = "0.19"
+# StatusNotifierItem tray, pure-Rust (zbus + async-io, no GTK/libdbus). The
+# blocking backend runs the tray on its own threads beside iced.
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+# For PR_SET_PDEATHSIG so the clipboard watcher child dies with the agent.
+libc = "0.2"
 
 # Build the bundled plugin cdylibs alongside the app and copy them into the
 # user's plugins directory (see build.rs). Debug builds only.

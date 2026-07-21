@@ -3,14 +3,41 @@
 //! Surfaces a result whenever the query is an arithmetic expression. Serves as
 //! the reference example of a query-driven [`Plugin`].
 
-use super::{ActionEffect, Plugin, PluginAction, PluginResult};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use super::{
+    ActionEffect, Plugin, PluginAction, PluginMeta, PluginResult, Preference, PreferenceKind,
+    PreferenceValue,
+};
+
+/// Option index of the "Decimal places" preference: 0 = Auto, else a fixed
+/// count via [`DECIMAL_OPTIONS`].
+const DECIMAL_OPTIONS: [&str; 4] = ["Auto", "2", "4", "6"];
 
 /// Evaluates arithmetic queries into a copyable result.
-pub struct Calculator;
+pub struct Calculator {
+    /// Selected index into [`DECIMAL_OPTIONS`] for the "Decimal places"
+    /// preference. Interior-mutable so `set_preference` (which takes `&self`)
+    /// can update it live.
+    decimals_choice: AtomicU64,
+}
 
 impl Calculator {
     pub fn new() -> Self {
-        Calculator
+        Calculator {
+            decimals_choice: AtomicU64::new(0),
+        }
+    }
+
+    /// Format a result honoring the "Decimal places" preference: `Auto` trims to
+    /// a sensible precision; a fixed choice shows exactly that many decimals.
+    fn format_result(&self, value: f64) -> String {
+        match self.decimals_choice.load(Ordering::Relaxed) {
+            1 => format!("{value:.2}"),
+            2 => format!("{value:.4}"),
+            3 => format!("{value:.6}"),
+            _ => format_number(value),
+        }
     }
 }
 
@@ -23,6 +50,47 @@ impl Default for Calculator {
 impl Plugin for Calculator {
     fn id(&self) -> &str {
         "calculator"
+    }
+
+    fn metadata(&self) -> PluginMeta {
+        PluginMeta {
+            name: Some("Calculator".to_string()),
+            author: Some("built-in".to_string()),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            description: Some(
+                "Do quick maths right from the search bar — arithmetic and unit-free \
+                 expressions evaluate as you type, and the result copies with a keystroke."
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn preferences(&self) -> Vec<Preference> {
+        vec![
+            Preference {
+                id: "copy_on_enter".to_string(),
+                label: "Copy on Enter".to_string(),
+                hint: "Pressing Enter copies the result to the clipboard.".to_string(),
+                kind: PreferenceKind::Toggle(true),
+            },
+            Preference {
+                id: "decimal_places".to_string(),
+                label: "Decimal places".to_string(),
+                hint: "How many digits to show after the point.".to_string(),
+                kind: PreferenceKind::Select {
+                    options: DECIMAL_OPTIONS.iter().map(|o| o.to_string()).collect(),
+                    selected: self.decimals_choice.load(Ordering::Relaxed),
+                },
+            },
+        ]
+    }
+
+    fn set_preference(&self, id: &str, value: PreferenceValue) {
+        if id == "decimal_places"
+            && let PreferenceValue::Choice(index) = value
+        {
+            self.decimals_choice.store(index, Ordering::Relaxed);
+        }
     }
 
     fn query(&self, query: &str) -> Vec<PluginResult> {
@@ -38,7 +106,7 @@ impl Plugin for Calculator {
             return Vec::new();
         };
 
-        let formatted = format_number(value);
+        let formatted = self.format_result(value);
 
         vec![PluginResult {
             source_id: self.id().to_string(),
@@ -331,5 +399,25 @@ mod tests {
         assert_eq!(results[0].title, "8192");
         assert_eq!(results[0].subtitle.as_deref(), Some("1024 × 8"));
         assert!(Calculator::new().query("firefox").is_empty());
+    }
+
+    #[test]
+    fn decimal_places_preference_changes_formatting() {
+        let calc = Calculator::new();
+        // Default is Auto: integers show no decimals.
+        assert_eq!(calc.query("1024 * 8")[0].title, "8192");
+
+        // Choosing "2" (option index 1) shows two fixed decimals.
+        calc.set_preference("decimal_places", PreferenceValue::Choice(1));
+        assert_eq!(calc.query("1024 * 8")[0].title, "8192.00");
+        assert_eq!(calc.query("10 / 4")[0].title, "2.50");
+
+        // "6" (index 3) shows six.
+        calc.set_preference("decimal_places", PreferenceValue::Choice(3));
+        assert_eq!(calc.query("10 / 4")[0].title, "2.500000");
+
+        // Back to Auto (index 0).
+        calc.set_preference("decimal_places", PreferenceValue::Choice(0));
+        assert_eq!(calc.query("10 / 4")[0].title, "2.5");
     }
 }

@@ -17,6 +17,18 @@ pub struct AppState {
     /// keyed by entity name. `#[serde(default)]` keeps older state files valid.
     #[serde(default)]
     pub recent_arguments: HashMap<String, Vec<String>>,
+    /// Persisted plugin preference values. A flat list (serialized as a TOML
+    /// array of tables) so plugin/preference ids with dots stay simple keys.
+    #[serde(default)]
+    pub preferences: Vec<StoredPreference>,
+}
+
+/// One persisted plugin preference value.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoredPreference {
+    pub plugin: String,
+    pub id: String,
+    pub value: crate::PreferenceValue,
 }
 
 /// Maximum number of recent arguments retained per entity.
@@ -94,6 +106,39 @@ impl AppState {
         history.truncate(MAX_RECENT_ARGUMENTS);
     }
 
+    /// The persisted value of a plugin preference, if the user has set one.
+    pub fn preference(&self, plugin: &str, id: &str) -> Option<crate::PreferenceValue> {
+        self.preferences
+            .iter()
+            .find(|pref| pref.plugin == plugin && pref.id == id)
+            .map(|pref| pref.value.clone())
+    }
+
+    /// Record a plugin preference value, replacing any prior value for it.
+    pub fn set_preference(&mut self, plugin: &str, id: &str, value: crate::PreferenceValue) {
+        if let Some(existing) = self
+            .preferences
+            .iter_mut()
+            .find(|pref| pref.plugin == plugin && pref.id == id)
+        {
+            existing.value = value;
+        } else {
+            self.preferences.push(StoredPreference {
+                plugin: plugin.to_string(),
+                id: id.to_string(),
+                value,
+            });
+        }
+    }
+
+    /// Every persisted preference as `(plugin, id, value)`, for rehydrating
+    /// plugins at startup.
+    pub fn all_preferences(&self) -> impl Iterator<Item = (&str, &str, crate::PreferenceValue)> {
+        self.preferences
+            .iter()
+            .map(|pref| (pref.plugin.as_str(), pref.id.as_str(), pref.value.clone()))
+    }
+
     pub fn get_score(&self, entity: &super::Entity) -> u32 {
         self.usage_stats
             .get(entity.name())
@@ -105,5 +150,54 @@ impl AppState {
         let contents = toml::to_string_pretty(self)?;
         fs::write(path, contents)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PreferenceValue;
+
+    #[test]
+    fn preferences_persist_and_round_trip_through_toml() {
+        let mut state = AppState::default();
+        state.set_preference("web.google", "region", PreferenceValue::Choice(2));
+        state.set_preference(
+            "web.google",
+            "open_in_background",
+            PreferenceValue::Toggle(true),
+        );
+        state.set_preference(
+            "example.showcase",
+            "greeting",
+            PreferenceValue::Text("Hi".to_string()),
+        );
+
+        // Setting the same (plugin, id) again replaces rather than duplicates.
+        state.set_preference("web.google", "region", PreferenceValue::Choice(1));
+        assert_eq!(state.preferences.len(), 3);
+        assert_eq!(
+            state.preference("web.google", "region"),
+            Some(PreferenceValue::Choice(1))
+        );
+
+        // Serialize to TOML (as `save` does) and read it back.
+        let toml = toml::to_string_pretty(&state).unwrap();
+        let restored: AppState = toml::from_str(&toml).unwrap();
+
+        // Untagged values survive the round trip with their distinct types.
+        assert_eq!(
+            restored.preference("web.google", "region"),
+            Some(PreferenceValue::Choice(1))
+        );
+        assert_eq!(
+            restored.preference("web.google", "open_in_background"),
+            Some(PreferenceValue::Toggle(true))
+        );
+        assert_eq!(
+            restored.preference("example.showcase", "greeting"),
+            Some(PreferenceValue::Text("Hi".to_string()))
+        );
+        assert_eq!(restored.all_preferences().count(), 3);
     }
 }

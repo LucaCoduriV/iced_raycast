@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::prism::items::ListEntry;
+use crate::prism::plugin_manager::PluginManagerState;
 use core::{FieldKind, FieldValueKind, View, ViewBody};
 use iced::widget::{Id, image};
 
@@ -94,6 +95,9 @@ pub struct PrismState {
     pub default_row_height: f32,
     pub show_argument_input: bool,
     pub is_argument_input_active: bool,
+    /// Whether a command/ctrl modifier is currently held. Used to drop printable
+    /// characters that a modifier chord (e.g. Ctrl+,) leaks into a focused input.
+    pub command_held: bool,
     pub show_actions: bool,
     pub actions_selected_index: usize,
     /// Recent arguments for the command currently in argument mode.
@@ -106,6 +110,8 @@ pub struct PrismState {
     /// Animation clock: `now - epoch` drives GIF frame selection.
     pub anim_epoch: std::time::Instant,
     pub anim_now: std::time::Instant,
+    /// When `Some`, the Plugin Manager settings screen takes over the window.
+    pub plugin_manager: Option<PluginManagerState>,
 }
 
 /// Host-held interaction state for one plugin view on the navigation stack.
@@ -195,15 +201,16 @@ impl ViewState {
         }
     }
 
-    /// Number of selectable grid cells (0 for non-grid bodies).
+    /// Number of selectable cells (grid cells or list rows; 0 otherwise).
     pub fn grid_len(&self) -> usize {
         match &self.view.body {
             ViewBody::Grid { items, .. } => items.len(),
+            ViewBody::List { items } => items.len(),
             _ => 0,
         }
     }
 
-    /// Column count of the active grid (at least 1; 1 for non-grid bodies).
+    /// Column count for navigation (grid columns; 1 for a list; 1 otherwise).
     pub fn grid_columns(&self) -> usize {
         match &self.view.body {
             ViewBody::Grid { columns, .. } => (*columns as usize).max(1),

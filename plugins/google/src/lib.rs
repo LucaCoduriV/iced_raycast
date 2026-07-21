@@ -4,7 +4,7 @@
 use plugin_api::{
     export_plugin,
     std_types::{RNone, ROption, RSome, RStr, RString, RVec},
-    AbiActionEffect, AbiCommand, HostPlugin,
+    AbiActionEffect, AbiCommand, AbiPluginMeta, AbiPreference, AbiPreferenceKind, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "web.google";
@@ -15,6 +15,41 @@ struct GooglePlugin;
 impl HostPlugin for GooglePlugin {
     fn id(&self) -> RString {
         PLUGIN_ID.into()
+    }
+
+    fn metadata(&self) -> AbiPluginMeta {
+        AbiPluginMeta {
+            name: "Google Search".into(),
+            author: "lcvitor".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            description: "Search Google straight from the launcher — type anything and open \
+                          the results in your default browser."
+                .into(),
+        }
+    }
+
+    fn preferences(&self) -> RVec<AbiPreference> {
+        RVec::from(vec![
+            AbiPreference {
+                id: "region".into(),
+                label: "Region".into(),
+                hint: "Bias results toward a region.".into(),
+                kind: AbiPreferenceKind::Select {
+                    options: RVec::from(vec![
+                        "Worldwide".into(),
+                        "United States".into(),
+                        "Switzerland".into(),
+                    ]),
+                    selected: 0,
+                },
+            },
+            AbiPreference {
+                id: "open_in_background".into(),
+                label: "Open in background".into(),
+                hint: "Keep focus on the launcher after opening a result.".into(),
+                kind: AbiPreferenceKind::Toggle(false),
+            },
+        ])
     }
 
     fn commands(&self) -> RVec<AbiCommand> {
