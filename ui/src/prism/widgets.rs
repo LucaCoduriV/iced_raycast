@@ -352,7 +352,7 @@ pub fn list_item<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let kind: &str = entry.kind();
+    let kind: &str = entry.kind_label();
 
     let content = row![
         render_icon(entry.icon(), icons::LG),
@@ -400,12 +400,14 @@ where
 }
 
 /// What invoking a menu action does.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum MenuActionKind {
     /// Same as pressing Enter on the item (open app / run command).
     Primary,
     /// Copy the item's name to the clipboard.
     CopyName,
+    /// Copy specific text to the clipboard (plugin-provided effect).
+    Copy(String),
 }
 
 /// A single row in the actions menu.
@@ -420,7 +422,33 @@ pub struct MenuAction {
 
 /// The contextual actions available for the selected entry.
 pub fn actions_for(entry: &ListEntry) -> Vec<MenuAction> {
-    let is_app = entry.kind() == "Application";
+    // Plugin results carry their own actions (e.g. "Copy to Clipboard").
+    let plugin_actions = entry.entity.plugin_actions();
+    if !plugin_actions.is_empty() {
+        return plugin_actions
+            .iter()
+            .enumerate()
+            .map(|(i, action)| {
+                let kind = match &action.effect {
+                    core::ActionEffect::CopyToClipboard(text) => MenuActionKind::Copy(text.clone()),
+                };
+
+                MenuAction {
+                    label: action.label.clone(),
+                    hint: if i == 0 { "↵" } else { "" },
+                    glyph: "⧉",
+                    color: if i == 0 {
+                        colors::PRIMARY
+                    } else {
+                        colors::SECONDARY
+                    },
+                    kind,
+                }
+            })
+            .collect();
+    }
+
+    let is_app = entry.kind_label() == "Application";
 
     vec![
         MenuAction {
@@ -633,11 +661,7 @@ fn footer_shell<'a, Message: 'a>(bar: Row<'a, Message>) -> Element<'a, Message> 
 pub fn footer<'a, Message: 'a>(selected: Option<&'a ListEntry>) -> Element<'a, Message> {
     let bar = match selected {
         Some(entry) => {
-            let primary = if entry.kind() == "Application" {
-                "Open"
-            } else {
-                "Run Command"
-            };
+            let primary = entry.primary_action_label();
 
             row![
                 render_icon(entry.icon(), icons::SM),

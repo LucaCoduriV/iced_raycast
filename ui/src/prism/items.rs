@@ -21,11 +21,24 @@ impl ListEntry {
         self.entity.as_ref().description()
     }
 
-    pub fn kind(&self) -> &str {
-        match self.entity.as_ref() {
-            Entity::Application(_) => "Application",
-            Entity::Command(_) => "Command",
-        }
+    /// Singular label shown on the right of the row ("Application", "Calculator").
+    pub fn kind_label(&self) -> &str {
+        self.entity.kind_label()
+    }
+
+    /// Plural section header this entry groups under.
+    pub fn section(&self) -> &str {
+        self.entity.section()
+    }
+
+    /// Section ordering key (plugins first, then apps, then commands).
+    pub fn section_rank(&self) -> u8 {
+        self.entity.section_rank()
+    }
+
+    /// Label for the default action, shown in the footer.
+    pub fn primary_action_label(&self) -> &str {
+        self.entity.primary_action_label()
     }
 
     pub fn icon(&self) -> IconHandle {
@@ -39,11 +52,18 @@ impl ListEntry {
 
 impl From<Entity> for ListEntry {
     fn from(value: Entity) -> Self {
-        // Use the real icon when the entity provides one, otherwise fall back
-        // to a generated colored letter tile (rather than a placeholder image).
-        let image_handler = match value.icon() {
-            Some(image) => image.into(),
-            None => IconHandle::letter(value.name()),
+        // Pick the tile: an entity-provided glyph (e.g. '=' for the
+        // calculator), then a real icon, then a generated letter tile.
+        let image_handler = if let Some(glyph) = value.tile_glyph() {
+            IconHandle::Letter {
+                letter: glyph,
+                color: colors::tile_color(value.section()),
+            }
+        } else {
+            match value.icon() {
+                Some(image) => image.into(),
+                None => IconHandle::letter(value.name()),
+            }
         };
 
         ListEntry {

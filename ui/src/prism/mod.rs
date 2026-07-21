@@ -6,7 +6,7 @@ mod widgets;
 use self::state::{PrismEntry, PrismState};
 use crate::design_system::{colors, spacing};
 use crate::prism::items::ListEntry;
-use core::{AppState, get_entities, search::SearchEngine};
+use core::{AppState, Entity, PluginRegistry, get_entities, search::SearchEngine};
 use iced::{
     Element, Length, Rectangle, Size, Subscription, Task,
     advanced::widget::{operate, operation},
@@ -21,6 +21,7 @@ use iced::{
 
 pub struct Prism {
     state: PrismState,
+    registry: PluginRegistry,
 }
 
 impl Prism {
@@ -55,7 +56,13 @@ impl Prism {
         );
         let init_task = Task::perform(async {}, |_| PrismEvent::Initialized);
 
-        (Self { state }, Task::batch(vec![load_task, init_task]))
+        (
+            Self {
+                state,
+                registry: PluginRegistry::with_builtins(),
+            },
+            Task::batch(vec![load_task, init_task]),
+        )
     }
 
     pub fn update(&mut self, message: PrismEvent, app_state: &mut AppState) -> Task<PrismEvent> {
@@ -72,13 +79,15 @@ impl Prism {
                 let mut wrapped_entries: Vec<PrismEntry> =
                     loaded_entries.into_iter().map(PrismEntry::from).collect();
 
-                // Group applications ahead of commands, then rank within each
-                // group by usage score / name so the list reads as sections.
-                let kind_rank = |e: &PrismEntry| u8::from(e.entry.kind() != "Application");
+                // Group by section (applications ahead of commands), then rank
+                // within each group by usage score / name.
                 wrapped_entries.sort_by(|a, b| {
-                    kind_rank(a).cmp(&kind_rank(b)).then_with(|| {
-                        SearchEngine::compare(&a.entry.entity, &b.entry.entity, app_state)
-                    })
+                    a.entry
+                        .section_rank()
+                        .cmp(&b.entry.section_rank())
+                        .then_with(|| {
+                            SearchEngine::compare(&a.entry.entity, &b.entry.entity, app_state)
+                        })
                 });
 
                 self.state.all_entries = wrapped_entries.clone();
@@ -95,14 +104,25 @@ impl Prism {
                 self.state.is_argument_input_active = false;
                 self.state.show_actions = false;
                 self.state.actions_selected_index = 0;
-                let query_lower = self.state.query.to_lowercase();
-                self.state.entries = self
-                    .state
-                    .all_entries
-                    .iter()
-                    .filter(|e| SearchEngine::matches(&e.search_haystack, &query_lower))
-                    .cloned()
+                // Query-driven plugin results (e.g. calculator) are produced
+                // fresh for this query and shown ahead of the filtered list;
+                // they bypass the name/description haystack filter.
+                let mut entries: Vec<PrismEntry> = self
+                    .registry
+                    .query(&self.state.query)
+                    .into_iter()
+                    .map(|result| PrismEntry::from(ListEntry::from(Entity::Plugin(result))))
                     .collect();
+
+                let query_lower = self.state.query.to_lowercase();
+                entries.extend(
+                    self.state
+                        .all_entries
+                        .iter()
+                        .filter(|e| SearchEngine::matches(&e.search_haystack, &query_lower))
+                        .cloned(),
+                );
+                self.state.entries = entries;
 
                 Task::batch(vec![
                     scroll_to(
@@ -234,6 +254,7 @@ impl Prism {
                         self.update(PrismEvent::Submit, app_state)
                     }
                     Some((widgets::MenuActionKind::CopyName, name)) => iced::clipboard::write(name),
+                    Some((widgets::MenuActionKind::Copy(text), _)) => iced::clipboard::write(text),
                     None => Task::none(),
                 }
             }
@@ -321,12 +342,12 @@ impl Prism {
             });
 
             let mut list_section: Vec<Element<PrismEvent>> = Vec::new();
-            let mut last_kind: Option<&str> = None;
+            let mut last_section: Option<&str> = None;
             for (i, entry) in self.state.entries.iter().enumerate() {
-                let kind = entry.entry.kind();
-                if last_kind != Some(kind) {
-                    list_section.push(widgets::section_header(group_label(kind)));
-                    last_kind = Some(kind);
+                let section = entry.entry.section();
+                if last_section != Some(section) {
+                    list_section.push(widgets::section_header(section));
+                    last_section = Some(section);
                 }
                 list_section.push(
                     container(widgets::list_item(
@@ -449,15 +470,6 @@ fn measure_item(id: Id) -> Task<PrismEvent> {
     operate(operation)
 }
 
-/// Plural section label shown above each group of results.
-fn group_label(kind: &str) -> &'static str {
-    if kind == "Application" {
-        "Applications"
-    } else {
-        "Commands"
-    }
-}
-
 /// Approximate height of a `section_header` row, used to offset scroll math
 /// since headers are not part of the measured `entries`.
 const HEADER_HEIGHT: f32 = 26.0;
@@ -466,12 +478,12 @@ const HEADER_HEIGHT: f32 = 26.0;
 /// (one per group that starts at or before it).
 fn headers_above(state: &PrismState, index: usize) -> usize {
     let mut count = 0;
-    let mut last_kind: Option<&str> = None;
+    let mut last_section: Option<&str> = None;
     for entry in state.entries.iter().take(index + 1) {
-        let kind = entry.entry.kind();
-        if last_kind != Some(kind) {
+        let section = entry.entry.section();
+        if last_section != Some(section) {
             count += 1;
-            last_kind = Some(kind);
+            last_section = Some(section);
         }
     }
     count

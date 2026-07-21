@@ -38,6 +38,16 @@ impl Raycast {
             }
             Message::Run => {
                 if let Some(entry) = self.prism.get_selected_entry().cloned() {
+                    // Plugin results act through an effect (e.g. copy the
+                    // calculator answer) rather than launching a process.
+                    if let Some(effect) = entry.entry.entity.primary_effect() {
+                        return match effect {
+                            core::ActionEffect::CopyToClipboard(text) => {
+                                Task::batch(vec![iced::clipboard::write(text), iced::exit()])
+                            }
+                        };
+                    }
+
                     self.app_state.record_usage(&entry.entry.entity);
 
                     let argument = self.prism.get_argument();
