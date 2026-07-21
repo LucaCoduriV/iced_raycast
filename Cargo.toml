@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = ["core", "ui"]
+members = ["core", "ui", "plugin_api", "example_plugin"]
 default-members = ["ui"]
 
 [workspace.dependencies]

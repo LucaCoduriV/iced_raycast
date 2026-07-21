@@ -8,6 +8,9 @@
 //! onto the same interface over time.
 
 mod calculator;
+mod loader;
+
+pub use loader::plugins_dir;
 
 use crate::common::Image;
 
@@ -73,11 +76,20 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
-    /// Registry populated with the built-in plugins.
+    /// Registry populated with the built-in plugins plus any compiled plugins
+    /// installed in the [`plugins_dir`].
     pub fn with_builtins() -> Self {
-        Self {
+        let mut registry = Self {
             plugins: vec![Box::new(calculator::Calculator::new())],
+        };
+
+        if let Some(dir) = plugins_dir() {
+            for plugin in loader::load_plugins_from_dir(&dir) {
+                registry.plugins.push(plugin);
+            }
         }
+
+        registry
     }
 
     /// Register an additional plugin.
