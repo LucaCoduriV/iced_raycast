@@ -231,6 +231,8 @@ impl Raycast {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         use iced::Subscription;
 
+        // `mut` is used only on Linux (the tray push below).
+        #[allow(unused_mut)]
         let mut subscriptions = vec![
             event::listen().map(Message::IcedEvent),
             self.prism.subscription().map(|event| match event {

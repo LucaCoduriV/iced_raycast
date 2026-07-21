@@ -43,13 +43,20 @@ pub fn main() -> iced::Result {
     // launch, immediately (see Raycast::new). Bind an OS hotkey to run the
     // binary to open it warm thereafter.
     iced::daemon(Raycast::new, Raycast::update, Raycast::view)
-        .title(|_state, _id| String::from("Raycast"))
+        .title(window_title)
         .style(Raycast::style)
         .font(include_bytes!("../fonts/Roboto-Regular.ttf").as_slice())
         .font(include_bytes!("../fonts/Roboto-Medium.ttf").as_slice())
         .font(include_bytes!("../fonts/RobotoMono-Regular.ttf").as_slice())
         .subscription(Raycast::subscription)
         .run()
+}
+
+/// The launcher window's title. A named `fn` (not a closure) so it satisfies the
+/// higher-ranked lifetime bound `iced::daemon().title(...)` requires.
+#[cfg(not(target_os = "linux"))]
+fn window_title(_state: &Raycast, _id: iced::window::Id) -> String {
+    String::from("Raycast")
 }
 
 #[cfg(target_os = "linux")]
