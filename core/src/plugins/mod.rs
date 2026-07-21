@@ -60,14 +60,133 @@ pub struct PluginAction {
 pub enum ActionEffect {
     /// Copy the given text to the system clipboard.
     CopyToClipboard(String),
+    /// Push a full-screen plugin view onto the navigation stack.
+    PushView(View),
+    /// Close the launcher.
+    Close,
 }
 
-/// A query-driven source of results.
+// ---------------------------------------------------------------------------
+// Views — full-screen layouts a plugin can push (grid / detail / form).
+// ---------------------------------------------------------------------------
+
+/// A full-screen view a plugin pushes onto the navigation stack.
+#[derive(Debug, Clone)]
+pub struct View {
+    /// Stable id used to route events back to the plugin's view.
+    pub view_id: String,
+    /// Header title.
+    pub title: String,
+    /// If present, a search bar is shown and typing emits [`ViewEventKind::Search`].
+    pub search_placeholder: Option<String>,
+    /// Footer primary-action label (e.g. "Copy Image", "Create Snippet").
+    pub submit_label: Option<String>,
+    pub body: ViewBody,
+}
+
+/// The body of a [`View`] — one of the supported layouts.
+#[derive(Debug, Clone)]
+pub enum ViewBody {
+    Grid { columns: u32, items: Vec<GridItem> },
+    Detail { body: String, metadata: Vec<KeyValue> },
+    Form { fields: Vec<FormField> },
+}
+
+/// A cell in a grid view.
+#[derive(Debug, Clone)]
+pub struct GridItem {
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub image: ImageSource,
+}
+
+/// Where a grid cell's image comes from.
+#[derive(Debug, Clone)]
+pub enum ImageSource {
+    None,
+    Path(String),
+    Bytes(Vec<u8>),
+}
+
+/// A key/value row in a detail view's metadata sidebar.
+#[derive(Debug, Clone)]
+pub struct KeyValue {
+    pub key: String,
+    pub value: String,
+}
+
+/// A field in a form view.
+#[derive(Debug, Clone)]
+pub struct FormField {
+    pub id: String,
+    pub label: String,
+    pub kind: FieldKind,
+}
+
+/// The kind (and initial value) of a form field.
+#[derive(Debug, Clone)]
+pub enum FieldKind {
+    Text(String),
+    TextArea(String),
+    Toggle(bool),
+    Dropdown { options: Vec<String>, selected: u64 },
+}
+
+/// An interaction reported to the plugin for the active view.
+#[derive(Debug, Clone)]
+pub struct ViewEvent {
+    pub view_id: String,
+    pub kind: ViewEventKind,
+}
+
+/// The kind of view interaction.
+#[derive(Debug, Clone)]
+pub enum ViewEventKind {
+    /// Search text changed (grid views).
+    Search(String),
+    /// A grid cell was activated, by its id.
+    Activate(String),
+    /// A form was submitted with the collected field values.
+    Submit(Vec<FieldValue>),
+}
+
+/// A value collected from a form field on submit.
+#[derive(Debug, Clone)]
+pub struct FieldValue {
+    pub id: String,
+    pub value: FieldValueKind,
+}
+
+/// The concrete value of a submitted form field.
+#[derive(Debug, Clone)]
+pub enum FieldValueKind {
+    Text(String),
+    Toggle(bool),
+    Choice(u64),
+}
+
+/// How the plugin responds to a view event.
+#[derive(Debug, Clone)]
+pub enum ViewResponse {
+    None,
+    /// Replace the current view's contents (e.g. new search results).
+    Update(View),
+    /// Perform an effect (copy, push another view, close).
+    Effect(ActionEffect),
+}
+
+/// A query-driven source of results, optionally backed by interactive views.
 pub trait Plugin: Send + Sync {
     /// Stable identifier for the plugin.
     fn id(&self) -> &str;
     /// Results for `query`. Return an empty vec when the query doesn't apply.
     fn query(&self, query: &str) -> Vec<PluginResult>;
+    /// Handle an interaction within one of this plugin's views. Plugins that
+    /// only produce list results can ignore this.
+    fn handle_event(&self, _event: ViewEvent) -> ViewResponse {
+        ViewResponse::None
+    }
 }
 
 /// Holds the active plugins and fans a query out to all of them.
@@ -103,6 +222,15 @@ impl PluginRegistry {
             .iter()
             .flat_map(|plugin| plugin.query(query))
             .collect()
+    }
+
+    /// Route a view event to its owning plugin (by id) and return the response.
+    pub fn handle_event(&self, plugin_id: &str, event: ViewEvent) -> ViewResponse {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.id() == plugin_id)
+            .map(|plugin| plugin.handle_event(event))
+            .unwrap_or(ViewResponse::None)
     }
 }
 

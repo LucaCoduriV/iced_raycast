@@ -1,7 +1,11 @@
 use crate::plugins::CommandEntity;
 
 pub use crate::common::Image;
-pub use crate::plugins::{ActionEffect, Plugin, PluginAction, PluginRegistry, PluginResult};
+pub use crate::plugins::{
+    ActionEffect, FieldKind, FieldValue, FieldValueKind, FormField, GridItem, ImageSource,
+    KeyValue, Plugin, PluginAction, PluginRegistry, PluginResult, View, ViewBody, ViewEvent,
+    ViewEventKind, ViewResponse,
+};
 use anyhow::Result;
 pub use application::App;
 pub use application::Application;
@@ -138,6 +142,14 @@ impl Entity {
     pub fn tile_glyph(&self) -> Option<char> {
         match self {
             Entity::Plugin(result) => result.glyph,
+            _ => None,
+        }
+    }
+
+    /// Id of the plugin that produced this entity, for routing view events.
+    pub fn plugin_source_id(&self) -> Option<&str> {
+        match self {
+            Entity::Plugin(result) => Some(&result.source_id),
             _ => None,
         }
     }

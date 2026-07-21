@@ -1,12 +1,18 @@
 mod items;
 mod keybindings;
 pub mod state;
+mod views;
 mod widgets;
 
-use self::state::{PrismEntry, PrismState};
+use std::sync::Arc;
+
+use self::state::{PrismEntry, PrismState, ViewState};
 use crate::design_system::{colors, spacing};
 use crate::prism::items::ListEntry;
-use core::{AppState, Entity, PluginRegistry, get_entities, search::SearchEngine};
+use core::{
+    ActionEffect, AppState, Entity, FieldValueKind, PluginRegistry, ViewEvent, ViewEventKind,
+    ViewResponse, get_entities, search::SearchEngine,
+};
 use iced::{
     Element, Length, Rectangle, Size, Subscription, Task,
     advanced::widget::{operate, operation},
@@ -21,7 +27,7 @@ use iced::{
 
 pub struct Prism {
     state: PrismState,
-    registry: PluginRegistry,
+    registry: Arc<PluginRegistry>,
 }
 
 impl Prism {
@@ -48,6 +54,7 @@ impl Prism {
             show_actions: false,
             actions_selected_index: 0,
             recent_arguments: Vec::new(),
+            views: Vec::new(),
         };
 
         let load_task = Task::perform(
@@ -59,7 +66,7 @@ impl Prism {
         (
             Self {
                 state,
-                registry: PluginRegistry::with_builtins(),
+                registry: Arc::new(PluginRegistry::with_builtins()),
             },
             Task::batch(vec![load_task, init_task]),
         )
@@ -145,6 +152,14 @@ impl Prism {
             }
 
             PrismEvent::SelectNext => {
+                if let Some(top) = self.state.views.last_mut() {
+                    // Down moves one grid row.
+                    let (len, columns) = (top.grid_len(), top.grid_columns());
+                    if len > 0 {
+                        top.selected = (top.selected + columns).min(len - 1);
+                    }
+                    return Task::none();
+                }
                 if self.state.show_actions {
                     let len = self.actions_len();
                     if len > 0 {
@@ -165,6 +180,11 @@ impl Prism {
             }
 
             PrismEvent::SelectPrevious => {
+                if let Some(top) = self.state.views.last_mut() {
+                    // Up moves one grid row.
+                    top.selected = top.selected.saturating_sub(top.grid_columns());
+                    return Task::none();
+                }
                 if self.state.show_actions {
                     self.state.actions_selected_index =
                         self.state.actions_selected_index.saturating_sub(1);
@@ -187,6 +207,21 @@ impl Prism {
 
             PrismEvent::EntrySelected(index) => {
                 self.state.selected_index = index;
+
+                // Plugin results carry an effect (copy / push a view / close);
+                // handle it here rather than the app-launch path.
+                let effect = self.get_selected_entry().and_then(|entry| {
+                    let entity = &entry.entry.entity;
+                    entity.primary_effect().map(|effect| {
+                        (
+                            effect,
+                            entity.plugin_source_id().unwrap_or_default().to_string(),
+                        )
+                    })
+                });
+                if let Some((effect, plugin_id)) = effect {
+                    return self.apply_effect(effect, plugin_id);
+                }
 
                 // Read what we need before mutating self below.
                 let selection = self
@@ -212,6 +247,9 @@ impl Prism {
             }
 
             PrismEvent::Submit => {
+                if !self.state.views.is_empty() {
+                    return self.update(PrismEvent::ViewSubmit, app_state);
+                }
                 if self.state.show_actions {
                     return self.update(
                         PrismEvent::InvokeAction(self.state.actions_selected_index),
@@ -241,25 +279,31 @@ impl Prism {
                 // Resolve the action's data before mutating self, so we don't
                 // hold a borrow across the follow-up update/task.
                 let resolved = self.get_selected_entry().and_then(|entry| {
+                    let plugin_id = entry.entry.entity.plugin_source_id().unwrap_or_default().to_string();
                     widgets::actions_for(&entry.entry)
                         .into_iter()
                         .nth(index)
-                        .map(|action| (action.kind, entry.entry.name().to_string()))
+                        .map(|action| (action.kind, entry.entry.name().to_string(), plugin_id))
                 });
 
                 self.state.show_actions = false;
 
                 match resolved {
-                    Some((widgets::MenuActionKind::Primary, _)) => {
+                    Some((widgets::MenuActionKind::Primary, _, _)) => {
                         self.update(PrismEvent::Submit, app_state)
                     }
-                    Some((widgets::MenuActionKind::CopyName, name)) => copy_and_exit(&name),
-                    Some((widgets::MenuActionKind::Copy(text), _)) => copy_and_exit(&text),
+                    Some((widgets::MenuActionKind::CopyName, name, _)) => copy_and_exit(&name),
+                    Some((widgets::MenuActionKind::Effect(effect), _, plugin_id)) => {
+                        self.apply_effect(effect, plugin_id)
+                    }
                     None => Task::none(),
                 }
             }
 
             PrismEvent::EscapePressed => {
+                if !self.state.views.is_empty() {
+                    return self.update(PrismEvent::PopView, app_state);
+                }
                 if self.state.show_actions {
                     self.state.show_actions = false;
                     Task::none()
@@ -273,8 +317,153 @@ impl Prism {
                 }
             }
 
+            PrismEvent::GridLeft => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.selected = top.selected.saturating_sub(1);
+                }
+                Task::none()
+            }
+
+            PrismEvent::GridRight => {
+                if let Some(top) = self.state.views.last_mut() {
+                    let len = top.grid_len();
+                    if len > 0 {
+                        top.selected = (top.selected + 1).min(len - 1);
+                    }
+                }
+                Task::none()
+            }
+
+            PrismEvent::ViewSearchInput(text) => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.search = text.clone();
+                    top.selected = 0;
+                }
+                self.dispatch_view_event(ViewEventKind::Search(text))
+            }
+
+            PrismEvent::ViewItemActivated(id) => {
+                self.dispatch_view_event(ViewEventKind::Activate(id))
+            }
+
+            PrismEvent::ViewFormText { field_id, value } => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.form_values.insert(field_id, FieldValueKind::Text(value));
+                }
+                Task::none()
+            }
+
+            PrismEvent::ViewFormToggle { field_id, value } => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.form_values
+                        .insert(field_id, FieldValueKind::Toggle(value));
+                }
+                Task::none()
+            }
+
+            PrismEvent::ViewFormChoice { field_id, index } => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.form_values
+                        .insert(field_id, FieldValueKind::Choice(index));
+                }
+                Task::none()
+            }
+
+            PrismEvent::ViewSubmit => {
+                let Some(top) = self.state.views.last() else {
+                    return Task::none();
+                };
+
+                match &top.view.body {
+                    core::ViewBody::Grid { items, .. } => match items.get(top.selected) {
+                        Some(item) => {
+                            let id = item.id.clone();
+                            self.dispatch_view_event(ViewEventKind::Activate(id))
+                        }
+                        None => Task::none(),
+                    },
+                    core::ViewBody::Form { .. } => {
+                        let values = top.collect_form_values();
+                        self.dispatch_view_event(ViewEventKind::Submit(values))
+                    }
+                    core::ViewBody::Detail { .. } => {
+                        self.dispatch_view_event(ViewEventKind::Submit(Vec::new()))
+                    }
+                }
+            }
+
+            PrismEvent::PopView => {
+                self.state.views.pop();
+                match self.state.views.last() {
+                    Some(top) if top.view.search_placeholder.is_some() => {
+                        focus(top.search_id.clone())
+                    }
+                    Some(_) => Task::none(),
+                    None => focus(self.state.search_id.clone()),
+                }
+            }
+
+            PrismEvent::ViewResponse(response) => match response {
+                ViewResponse::None => Task::none(),
+                ViewResponse::Update(view) => {
+                    if let Some(top) = self.state.views.last_mut() {
+                        top.view = view;
+                        let len = top.grid_len();
+                        top.selected = top.selected.min(len.saturating_sub(1));
+                    }
+                    Task::none()
+                }
+                ViewResponse::Effect(effect) => {
+                    let plugin_id = self
+                        .state
+                        .views
+                        .last()
+                        .map(|v| v.plugin_id.clone())
+                        .unwrap_or_default();
+                    self.apply_effect(effect, plugin_id)
+                }
+            },
+
             _ => Task::none(),
         }
+    }
+
+    /// Perform a plugin action effect: copy, close, or push a view.
+    fn apply_effect(&mut self, effect: ActionEffect, plugin_id: String) -> Task<PrismEvent> {
+        match effect {
+            ActionEffect::CopyToClipboard(text) => copy_and_exit(&text),
+            ActionEffect::Close => Task::done(PrismEvent::ExitApp),
+            ActionEffect::PushView(view) => {
+                let state = ViewState::new(plugin_id, view);
+                let focus_task = state
+                    .view
+                    .search_placeholder
+                    .is_some()
+                    .then(|| focus(state.search_id.clone()));
+                self.state.views.push(state);
+                focus_task.unwrap_or_else(Task::none)
+            }
+        }
+    }
+
+    /// Send a view event to the active view's owning plugin off the UI thread,
+    /// delivering the plugin's response as a [`PrismEvent::ViewResponse`].
+    fn dispatch_view_event(&self, kind: ViewEventKind) -> Task<PrismEvent> {
+        let Some(top) = self.state.views.last() else {
+            return Task::none();
+        };
+
+        let registry = Arc::clone(&self.registry);
+        let plugin_id = top.plugin_id.clone();
+        let event = ViewEvent {
+            view_id: top.view.view_id.clone(),
+            kind,
+        };
+
+        Task::perform(
+            async move { registry.handle_event(&plugin_id, event) },
+            PrismEvent::ViewResponse,
+        )
     }
 
     pub fn get_argument(&self) -> Option<String> {
@@ -292,6 +481,8 @@ impl Prism {
                 keybindings::map_key_to_action(&key, modifiers).map(|action| match action {
                     keybindings::KeyAction::SelectPrevious => PrismEvent::SelectPrevious,
                     keybindings::KeyAction::SelectNext => PrismEvent::SelectNext,
+                    keybindings::KeyAction::SelectLeft => PrismEvent::GridLeft,
+                    keybindings::KeyAction::SelectRight => PrismEvent::GridRight,
                     keybindings::KeyAction::Submit => PrismEvent::Submit,
                     keybindings::KeyAction::EscapePressed => PrismEvent::EscapePressed,
                     keybindings::KeyAction::ToggleActions => PrismEvent::ToggleActions,
@@ -310,6 +501,16 @@ impl Prism {
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
+        // A plugin view takes over the whole window when one is on the stack.
+        if let Some(top) = self.state.views.last() {
+            return container(views::view_screen(top))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(spacing::SPACE_S)
+                .style(window_style)
+                .into();
+        }
+
         let selected_entry = self.get_selected_entry();
 
         let content: Element<PrismEvent> = if self.state.show_argument_input
@@ -385,15 +586,7 @@ impl Prism {
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(spacing::SPACE_S)
-        .style(|_| container::Style {
-            background: Some(colors::SURFACE_CONTAINER.scale_alpha(0.8).into()),
-            border: iced::Border {
-                color: colors::ON_SURFACE.scale_alpha(0.3),
-                width: 1.0,
-                radius: 15.0.into(),
-            },
-            ..Default::default()
-        });
+        .style(window_style);
 
         // Overlay the actions popover, anchored bottom-right above the footer.
         if self.state.show_actions
@@ -443,6 +636,18 @@ pub enum PrismEvent {
     ToggleActions,
     InvokeAction(usize),
     ArgumentSelected(String),
+
+    // --- Plugin views ---
+    GridLeft,
+    GridRight,
+    ViewSearchInput(String),
+    ViewItemActivated(String),
+    ViewFormText { field_id: String, value: String },
+    ViewFormToggle { field_id: String, value: bool },
+    ViewFormChoice { field_id: String, index: u64 },
+    ViewSubmit,
+    PopView,
+    ViewResponse(ViewResponse),
 }
 
 fn measure_all_visible_items(state: &PrismState) -> Task<PrismEvent> {
@@ -468,6 +673,19 @@ fn measure_item(id: Id) -> Task<PrismEvent> {
         })
     });
     operate(operation)
+}
+
+/// The launcher window chrome: translucent surface, subtle border, rounded.
+fn window_style(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(colors::SURFACE_CONTAINER.scale_alpha(0.8).into()),
+        border: iced::Border {
+            color: colors::ON_SURFACE.scale_alpha(0.3),
+            width: 1.0,
+            radius: 15.0.into(),
+        },
+        ..Default::default()
+    }
 }
 
 /// Copy `text` to the clipboard (persisting past exit) and close the launcher.

@@ -406,8 +406,8 @@ pub enum MenuActionKind {
     Primary,
     /// Copy the item's name to the clipboard.
     CopyName,
-    /// Copy specific text to the clipboard (plugin-provided effect).
-    Copy(String),
+    /// Perform a plugin-provided effect (copy / push view / close).
+    Effect(core::ActionEffect),
 }
 
 /// A single row in the actions menu.
@@ -428,22 +428,16 @@ pub fn actions_for(entry: &ListEntry) -> Vec<MenuAction> {
         return plugin_actions
             .iter()
             .enumerate()
-            .map(|(i, action)| {
-                let kind = match &action.effect {
-                    core::ActionEffect::CopyToClipboard(text) => MenuActionKind::Copy(text.clone()),
-                };
-
-                MenuAction {
-                    label: action.label.clone(),
-                    hint: if i == 0 { "↵" } else { "" },
-                    glyph: "⧉",
-                    color: if i == 0 {
-                        colors::PRIMARY
-                    } else {
-                        colors::SECONDARY
-                    },
-                    kind,
-                }
+            .map(|(i, action)| MenuAction {
+                label: action.label.clone(),
+                hint: if i == 0 { "↵" } else { "" },
+                glyph: "⧉",
+                color: if i == 0 {
+                    colors::PRIMARY
+                } else {
+                    colors::SECONDARY
+                },
+                kind: MenuActionKind::Effect(action.effect.clone()),
             })
             .collect();
     }

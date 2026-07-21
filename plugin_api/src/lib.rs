@@ -80,6 +80,143 @@ pub struct AbiPluginAction {
 pub enum AbiActionEffect {
     /// Copy the given text to the system clipboard.
     CopyToClipboard(RString),
+    /// Push a full-screen plugin view onto the navigation stack.
+    PushView(AbiView),
+    /// Close the launcher.
+    Close,
+}
+
+/// Where a grid cell's image comes from.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiImageSource {
+    /// No image; the host renders a placeholder tile.
+    None,
+    /// A path to an image file on disk.
+    Path(RString),
+    /// Encoded image bytes (png/jpeg/gif/…).
+    Bytes(RVec<u8>),
+}
+
+/// A key/value row in a detail view's metadata sidebar.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiKeyValue {
+    pub key: RString,
+    pub value: RString,
+}
+
+/// A cell in a grid view.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiGridItem {
+    /// Stable id echoed back to the plugin when this cell is activated.
+    pub id: RString,
+    pub title: RString,
+    pub subtitle: ROption<RString>,
+    pub image: AbiImageSource,
+}
+
+/// A field in a form view.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiFormField {
+    /// Stable id echoed back with the field's value on submit.
+    pub id: RString,
+    pub label: RString,
+    pub kind: AbiFieldKind,
+}
+
+/// The kind (and initial value) of a form field.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiFieldKind {
+    /// Single-line text with an initial value.
+    Text(RString),
+    /// Multi-line / code text with an initial value.
+    TextArea(RString),
+    /// On/off toggle with an initial state.
+    Toggle(bool),
+    /// One-of-many choice: options and the initially selected index.
+    Dropdown { options: RVec<RString>, selected: u64 },
+}
+
+/// The body of a view — one of the supported layouts.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiViewBody {
+    /// A grid of image cells.
+    Grid { columns: u32, items: RVec<AbiGridItem> },
+    /// A rich-text body with a metadata sidebar.
+    Detail { body: RString, metadata: RVec<AbiKeyValue> },
+    /// A set of input fields.
+    Form { fields: RVec<AbiFormField> },
+}
+
+/// A full-screen view a plugin pushes onto the navigation stack.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiView {
+    /// Stable id used to route events back to the owning plugin's view.
+    pub view_id: RString,
+    /// Header title.
+    pub title: RString,
+    /// If present, a search bar is shown and typing emits `Search` events.
+    pub search_placeholder: ROption<RString>,
+    /// Footer primary-action label (e.g. "Copy Image", "Create Snippet").
+    pub submit_label: ROption<RString>,
+    pub body: AbiViewBody,
+}
+
+/// A value collected from a form field on submit.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiFieldValue {
+    pub id: RString,
+    pub value: AbiFieldValueKind,
+}
+
+/// The concrete value of a submitted form field.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiFieldValueKind {
+    Text(RString),
+    Toggle(bool),
+    /// Selected dropdown index.
+    Choice(u64),
+}
+
+/// An interaction the host reports to the plugin for the active view.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiViewEvent {
+    /// Id of the view the event targets.
+    pub view_id: RString,
+    pub kind: AbiViewEventKind,
+}
+
+/// The kind of view interaction.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiViewEventKind {
+    /// Search text changed (grid views).
+    Search(RString),
+    /// A grid cell was activated, by its id.
+    Activate(RString),
+    /// A form was submitted with the collected field values.
+    Submit(RVec<AbiFieldValue>),
+}
+
+/// How the plugin responds to a view event.
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub enum AbiViewResponse {
+    /// Do nothing.
+    None,
+    /// Replace the current view's contents (e.g. new search results).
+    Update(AbiView),
+    /// Perform an effect (copy, push another view, close).
+    Effect(AbiActionEffect),
 }
 
 /// The interface a plugin implements. Object-safe and FFI-safe via
@@ -91,6 +228,13 @@ pub trait HostPlugin: Send + Sync {
 
     /// Results for `query`. Return an empty `RVec` when the query doesn't apply.
     fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult>;
+
+    /// Handle an interaction within one of this plugin's views. Plugins that
+    /// only produce list results can ignore this (the default returns `None`).
+    fn handle_event(&self, event: AbiViewEvent) -> AbiViewResponse {
+        let _ = event;
+        AbiViewResponse::None
+    }
 }
 
 /// The root module a plugin library exports. Its single entry point constructs

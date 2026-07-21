@@ -1,0 +1,400 @@
+//! Renderers for full-screen plugin views (grid / detail / form).
+
+use core::{FieldKind, FieldValueKind, GridItem, ImageSource, ViewBody};
+use iced::{
+    Alignment, Color, ContentFit, Element, Length,
+    widget::{
+        button, column, container, image, pick_list, row, scrollable, space::horizontal, text,
+        text_input, toggler,
+    },
+};
+
+use super::PrismEvent;
+use super::state::ViewState;
+use super::widgets::{kbd, scrollbar_style, slim_scrollbar};
+use crate::design_system::typo::Typography;
+use crate::design_system::{colors, spacing, typo};
+
+/// Render the active plugin view: header, optional search, body, footer.
+pub fn view_screen(state: &ViewState) -> Element<'_, PrismEvent> {
+    let header = row![
+        back_button(),
+        text(state.view.title.as_str())
+            .typography(typo::TITLE_M)
+            .color(colors::ON_SURFACE),
+        horizontal(),
+    ]
+    .spacing(spacing::SPACE_S)
+    .align_y(Alignment::Center);
+
+    let mut screen = column![container(header).padding(iced::Padding {
+        top: 4.0,
+        right: 8.0,
+        bottom: 8.0,
+        left: 4.0,
+    })];
+
+    if let Some(placeholder) = &state.view.search_placeholder {
+        screen = screen.push(search_bar(state, placeholder));
+    }
+
+    screen = screen.push(super::widgets::divider());
+
+    let body: Element<PrismEvent> = match &state.view.body {
+        ViewBody::Grid { columns, items } => grid_body(*columns, items, state.selected),
+        ViewBody::Detail { body, metadata } => detail_body(body, metadata),
+        ViewBody::Form { .. } => form_body(state),
+    };
+
+    screen = screen.push(
+        scrollable(container(body).padding(spacing::SPACE_S))
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .direction(slim_scrollbar())
+            .style(scrollbar_style),
+    );
+
+    screen = screen.push(footer(state));
+
+    screen.height(Length::Fill).into()
+}
+
+fn back_button() -> Element<'static, PrismEvent> {
+    button(text("‹").size(20.0).color(colors::ON_SURFACE))
+        .on_press(PrismEvent::PopView)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 8.0,
+            bottom: 2.0,
+            left: 8.0,
+        })
+        .style(|_theme, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: Some(
+                    colors::ON_SURFACE
+                        .scale_alpha(if hovered { 0.14 } else { 0.08 })
+                        .into(),
+                ),
+                text_color: colors::ON_SURFACE,
+                border: iced::Border {
+                    radius: 7.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+fn search_bar<'a>(state: &'a ViewState, placeholder: &'a str) -> Element<'a, PrismEvent> {
+    text_input(placeholder, &state.search)
+        .id(state.search_id.clone())
+        .on_input(PrismEvent::ViewSearchInput)
+        .size(typo::TITLE_M.0)
+        .font(typo::TITLE_M.2)
+        .padding(iced::Padding {
+            top: 8.0,
+            right: 8.0,
+            bottom: 8.0,
+            left: 8.0,
+        })
+        .style(transparent_input_style)
+        .into()
+}
+
+fn transparent_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: Color::TRANSPARENT.into(),
+        border: iced::Border {
+            width: 0.0,
+            ..Default::default()
+        },
+        icon: Color::WHITE,
+        placeholder: colors::ON_SURFACE_VARIANT,
+        value: Color::WHITE,
+        selection: colors::ON_SURFACE.scale_alpha(0.3),
+    }
+}
+
+// --- Grid -------------------------------------------------------------------
+
+fn grid_body<'a>(columns: u32, items: &'a [GridItem], selected: usize) -> Element<'a, PrismEvent> {
+    let columns = columns.max(1) as usize;
+    let mut grid = column![].spacing(spacing::SPACE_M);
+
+    for (row_index, chunk) in items.chunks(columns).enumerate() {
+        let mut cells = row![].spacing(spacing::SPACE_M);
+        for (col_index, item) in chunk.iter().enumerate() {
+            let index = row_index * columns + col_index;
+            cells = cells.push(grid_cell(item, index == selected));
+        }
+        // Pad the final row so cells keep their column width.
+        for _ in chunk.len()..columns {
+            cells = cells.push(horizontal());
+        }
+        grid = grid.push(cells);
+    }
+
+    grid.into()
+}
+
+fn grid_cell(item: &GridItem, is_selected: bool) -> Element<'_, PrismEvent> {
+    let subtitle = item.subtitle.as_deref().unwrap_or("");
+
+    let mut content = column![
+        grid_image(&item.image),
+        text(item.title.as_str())
+            .typography(typo::LABEL_M)
+            .color(colors::ON_SURFACE),
+    ]
+    .spacing(spacing::SPACE_XS)
+    .width(Length::Fill);
+
+    if !subtitle.is_empty() {
+        content = content.push(
+            text(subtitle)
+                .typography(typo::BODY_S)
+                .color(colors::ON_SURFACE_VARIANT),
+        );
+    }
+
+    button(content)
+        .on_press(PrismEvent::ViewItemActivated(item.id.clone()))
+        .width(Length::Fill)
+        .padding(spacing::SPACE_XS)
+        .style(move |_theme, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: (is_selected || hovered)
+                    .then(|| colors::ON_SURFACE.scale_alpha(0.08).into()),
+                text_color: colors::ON_SURFACE,
+                border: iced::Border {
+                    color: if is_selected {
+                        colors::TERTIARY
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                    width: if is_selected { 1.0 } else { 0.0 },
+                    radius: 10.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+fn image_tile(element: Element<'_, PrismEvent>) -> Element<'_, PrismEvent> {
+    container(element)
+        .center(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fixed(96.0))
+        .style(|_| container::Style {
+            background: Some(colors::ON_SURFACE.scale_alpha(0.06).into()),
+            border: iced::Border {
+                radius: 8.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn grid_image(source: &ImageSource) -> Element<'_, PrismEvent> {
+    match source {
+        ImageSource::Path(path) => image_tile(
+            image(image::Handle::from_path(path))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .content_fit(ContentFit::Cover)
+                .into(),
+        ),
+        ImageSource::Bytes(bytes) => image_tile(
+            image(image::Handle::from_bytes(bytes.clone()))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .content_fit(ContentFit::Cover)
+                .into(),
+        ),
+        ImageSource::None => image_tile(text("image").size(13.0).color(colors::SECONDARY).into()),
+    }
+}
+
+// --- Detail -----------------------------------------------------------------
+
+fn detail_body<'a>(body: &'a str, metadata: &'a [core::KeyValue]) -> Element<'a, PrismEvent> {
+    let mut text_column = column![].spacing(spacing::SPACE_S).width(Length::Fill);
+    for paragraph in body.split("\n\n") {
+        text_column = text_column.push(
+            text(paragraph.trim())
+                .typography(typo::BODY_M)
+                .color(colors::ON_SURFACE),
+        );
+    }
+
+    let mut sidebar = column![].spacing(spacing::SPACE_M).width(Length::Fixed(200.0));
+    for entry in metadata {
+        sidebar = sidebar.push(
+            column![
+                text(entry.key.to_uppercase())
+                    .typography(typo::LABEL_S)
+                    .color(colors::SECONDARY),
+                text(entry.value.as_str())
+                    .typography(typo::BODY_M)
+                    .color(colors::ON_SURFACE),
+            ]
+            .spacing(spacing::SPACE_XXS),
+        );
+    }
+
+    row![text_column, sidebar]
+        .spacing(spacing::SPACE_L)
+        .into()
+}
+
+// --- Form -------------------------------------------------------------------
+
+fn form_body(state: &ViewState) -> Element<'_, PrismEvent> {
+    let ViewBody::Form { fields } = &state.view.body else {
+        return column![].into();
+    };
+
+    let mut form = column![].spacing(spacing::SPACE_M).width(Length::Fill);
+
+    for field in fields {
+        let control: Element<PrismEvent> = match &field.kind {
+            FieldKind::Text(initial) | FieldKind::TextArea(initial) => {
+                let value = text_value(state, &field.id, initial);
+                let field_id = field.id.clone();
+                let mono = matches!(field.kind, FieldKind::TextArea(_));
+                let mut input = text_input("", value)
+                    .on_input(move |v| PrismEvent::ViewFormText {
+                        field_id: field_id.clone(),
+                        value: v,
+                    })
+                    .padding(spacing::SPACE_S)
+                    .style(form_input_style);
+                if mono {
+                    input = input.font(typo::CODE_M.2);
+                }
+                input.into()
+            }
+            FieldKind::Toggle(initial) => {
+                let on = toggle_value(state, &field.id, *initial);
+                let field_id = field.id.clone();
+                toggler(on)
+                    .on_toggle(move |v| PrismEvent::ViewFormToggle {
+                        field_id: field_id.clone(),
+                        value: v,
+                    })
+                    .into()
+            }
+            FieldKind::Dropdown { options, selected } => {
+                let current = choice_value(state, &field.id, *selected) as usize;
+                let options = options.clone();
+                let field_id = field.id.clone();
+                let selected_label = options.get(current).cloned();
+                let lookup = options.clone();
+                pick_list(options, selected_label, move |choice: String| {
+                    let index = lookup.iter().position(|o| *o == choice).unwrap_or(0) as u64;
+                    PrismEvent::ViewFormChoice {
+                        field_id: field_id.clone(),
+                        index,
+                    }
+                })
+                .into()
+            }
+        };
+
+        form = form.push(
+            column![
+                text(field.label.as_str())
+                    .typography(typo::LABEL_M)
+                    .color(colors::ON_SURFACE_VARIANT),
+                control,
+            ]
+            .spacing(spacing::SPACE_XS),
+        );
+    }
+
+    form.into()
+}
+
+fn form_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: colors::ON_SURFACE.scale_alpha(0.05).into(),
+        border: iced::Border {
+            color: colors::ON_SURFACE.scale_alpha(0.12),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        icon: Color::WHITE,
+        placeholder: colors::ON_SURFACE_VARIANT,
+        value: Color::WHITE,
+        selection: colors::ON_SURFACE.scale_alpha(0.3),
+    }
+}
+
+fn text_value<'a>(state: &'a ViewState, id: &str, initial: &'a str) -> &'a str {
+    match state.form_values.get(id) {
+        Some(FieldValueKind::Text(value)) => value,
+        _ => initial,
+    }
+}
+
+fn toggle_value(state: &ViewState, id: &str, initial: bool) -> bool {
+    match state.form_values.get(id) {
+        Some(FieldValueKind::Toggle(value)) => *value,
+        _ => initial,
+    }
+}
+
+fn choice_value(state: &ViewState, id: &str, initial: u64) -> u64 {
+    match state.form_values.get(id) {
+        Some(FieldValueKind::Choice(value)) => *value,
+        _ => initial,
+    }
+}
+
+// --- Footer -----------------------------------------------------------------
+
+fn footer(state: &ViewState) -> Element<'_, PrismEvent> {
+    let submit = state.view.submit_label.as_deref().unwrap_or("Select");
+
+    let bar = row![
+        horizontal(),
+        text(submit).size(13.0).color(colors::TERTIARY),
+        kbd("↵"),
+        container("")
+            .width(Length::Fixed(1.0))
+            .height(Length::Fixed(18.0))
+            .style(|_| container::Style {
+                background: Some(colors::ON_SURFACE.scale_alpha(0.12).into()),
+                ..Default::default()
+            }),
+        text("Back").size(13.0).color(colors::ON_SURFACE),
+        kbd("esc"),
+    ]
+    .spacing(spacing::SPACE_S)
+    .align_y(Alignment::Center);
+
+    column![
+        container("")
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(|_| container::Style {
+                background: Some(colors::ON_SURFACE.scale_alpha(0.08).into()),
+                ..Default::default()
+            }),
+        container(bar)
+            .width(Length::Fill)
+            .center_y(Length::Fixed(42.0))
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: 12.0,
+            }),
+    ]
+    .into()
+}

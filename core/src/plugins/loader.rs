@@ -11,12 +11,20 @@ use std::path::{Path, PathBuf};
 
 use abi_stable::{
     library::lib_header_from_path,
-    std_types::{RBox, RStr},
+    std_types::{RBox, RStr, RString},
 };
 use directories::ProjectDirs;
-use plugin_api::{AbiActionEffect, AbiPluginResult, HostPlugin_TO, PluginModRef};
+use plugin_api::{
+    AbiActionEffect, AbiFieldValue, AbiFieldValueKind, AbiFormField, AbiGridItem, AbiImageSource,
+    AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind, AbiViewResponse,
+    HostPlugin_TO, PluginModRef,
+};
 
-use super::{ActionEffect, Plugin, PluginAction, PluginResult};
+use super::{
+    ActionEffect, FieldKind, FieldValue, FieldValueKind, FormField, GridItem, ImageSource,
+    KeyValue, Plugin, PluginAction, PluginResult, View, ViewBody, ViewEvent, ViewEventKind,
+    ViewResponse,
+};
 use crate::{APPLICATION, ORGANISATION, QUALIFIER, common::Image};
 
 /// A dynamically-loaded plugin, wrapping its FFI-safe trait object behind the
@@ -37,6 +45,10 @@ impl Plugin for DynamicPlugin {
             .into_iter()
             .map(convert_result)
             .collect()
+    }
+
+    fn handle_event(&self, event: ViewEvent) -> ViewResponse {
+        convert_response(self.inner.handle_event(to_abi_event(event)))
     }
 }
 
@@ -108,6 +120,34 @@ mod tests {
         // It should stay quiet for unrelated queries.
         let quiet: Vec<_> = plugins.iter().flat_map(|p| p.query("firefox")).collect();
         assert!(quiet.is_empty(), "example plugin fired on an unrelated query");
+
+        // "gif" produces a result whose default action pushes a grid view.
+        let gif = plugins
+            .iter()
+            .flat_map(|p| p.query("gif trending"))
+            .next()
+            .expect("no gif result");
+        assert!(
+            matches!(
+                gif.actions.first().map(|a| &a.effect),
+                Some(ActionEffect::PushView(view)) if matches!(view.body, ViewBody::Grid { .. })
+            ),
+            "gif result did not push a grid view"
+        );
+
+        // Searching within the grid view round-trips over the ABI and returns
+        // an updated grid.
+        let response = plugins[0].handle_event(ViewEvent {
+            view_id: "gif-grid".to_string(),
+            kind: ViewEventKind::Search("cats".to_string()),
+        });
+        match response {
+            ViewResponse::Update(view) => match view.body {
+                ViewBody::Grid { items, .. } => assert_eq!(items.len(), 8),
+                _ => panic!("expected a grid update"),
+            },
+            _ => panic!("expected an Update response from the grid search"),
+        }
     }
 }
 
@@ -122,17 +162,114 @@ fn convert_result(result: AbiPluginResult) -> PluginResult {
             .into_option()
             .map(|path| Image::Path(path.to_string())),
         glyph: result.glyph.into_option().and_then(char::from_u32),
-        actions: result
-            .actions
-            .into_iter()
-            .map(|action| PluginAction {
-                label: action.label.to_string(),
-                effect: match action.effect {
-                    AbiActionEffect::CopyToClipboard(text) => {
-                        ActionEffect::CopyToClipboard(text.to_string())
-                    }
-                },
-            })
-            .collect(),
+        actions: result.actions.into_iter().map(convert_action).collect(),
+    }
+}
+
+fn convert_action(action: plugin_api::AbiPluginAction) -> PluginAction {
+    PluginAction {
+        label: action.label.to_string(),
+        effect: convert_effect(action.effect),
+    }
+}
+
+// --- ABI -> native (results coming from the plugin) -------------------------
+
+fn convert_effect(effect: AbiActionEffect) -> ActionEffect {
+    match effect {
+        AbiActionEffect::CopyToClipboard(text) => ActionEffect::CopyToClipboard(text.to_string()),
+        AbiActionEffect::PushView(view) => ActionEffect::PushView(convert_view(view)),
+        AbiActionEffect::Close => ActionEffect::Close,
+    }
+}
+
+fn convert_view(view: AbiView) -> View {
+    View {
+        view_id: view.view_id.to_string(),
+        title: view.title.to_string(),
+        search_placeholder: view.search_placeholder.into_option().map(|s| s.to_string()),
+        submit_label: view.submit_label.into_option().map(|s| s.to_string()),
+        body: match view.body {
+            AbiViewBody::Grid { columns, items } => ViewBody::Grid {
+                columns,
+                items: items.into_iter().map(convert_grid_item).collect(),
+            },
+            AbiViewBody::Detail { body, metadata } => ViewBody::Detail {
+                body: body.to_string(),
+                metadata: metadata
+                    .into_iter()
+                    .map(|kv| KeyValue {
+                        key: kv.key.to_string(),
+                        value: kv.value.to_string(),
+                    })
+                    .collect(),
+            },
+            AbiViewBody::Form { fields } => ViewBody::Form {
+                fields: fields.into_iter().map(convert_form_field).collect(),
+            },
+        },
+    }
+}
+
+fn convert_grid_item(item: AbiGridItem) -> GridItem {
+    GridItem {
+        id: item.id.to_string(),
+        title: item.title.to_string(),
+        subtitle: item.subtitle.into_option().map(|s| s.to_string()),
+        image: match item.image {
+            AbiImageSource::None => ImageSource::None,
+            AbiImageSource::Path(path) => ImageSource::Path(path.to_string()),
+            AbiImageSource::Bytes(bytes) => ImageSource::Bytes(bytes.into()),
+        },
+    }
+}
+
+fn convert_form_field(field: AbiFormField) -> FormField {
+    FormField {
+        id: field.id.to_string(),
+        label: field.label.to_string(),
+        kind: match field.kind {
+            plugin_api::AbiFieldKind::Text(v) => FieldKind::Text(v.to_string()),
+            plugin_api::AbiFieldKind::TextArea(v) => FieldKind::TextArea(v.to_string()),
+            plugin_api::AbiFieldKind::Toggle(v) => FieldKind::Toggle(v),
+            plugin_api::AbiFieldKind::Dropdown { options, selected } => FieldKind::Dropdown {
+                options: options.into_iter().map(|s| s.to_string()).collect(),
+                selected,
+            },
+        },
+    }
+}
+
+fn convert_response(response: AbiViewResponse) -> ViewResponse {
+    match response {
+        AbiViewResponse::None => ViewResponse::None,
+        AbiViewResponse::Update(view) => ViewResponse::Update(convert_view(view)),
+        AbiViewResponse::Effect(effect) => ViewResponse::Effect(convert_effect(effect)),
+    }
+}
+
+// --- native -> ABI (events going to the plugin) -----------------------------
+
+fn to_abi_event(event: ViewEvent) -> AbiViewEvent {
+    AbiViewEvent {
+        view_id: RString::from(event.view_id),
+        kind: match event.kind {
+            ViewEventKind::Search(text) => AbiViewEventKind::Search(RString::from(text)),
+            ViewEventKind::Activate(id) => AbiViewEventKind::Activate(RString::from(id)),
+            ViewEventKind::Submit(values) => {
+                AbiViewEventKind::Submit(values.into_iter().map(to_abi_field_value).collect())
+            }
+        },
+    }
+}
+
+fn to_abi_field_value(value: FieldValue) -> AbiFieldValue {
+    AbiFieldValue {
+        id: RString::from(value.id),
+        value: match value.value {
+            FieldValueKind::Text(text) => AbiFieldValueKind::Text(RString::from(text)),
+            FieldValueKind::Toggle(on) => AbiFieldValueKind::Toggle(on),
+            FieldValueKind::Choice(index) => AbiFieldValueKind::Choice(index),
+        },
     }
 }

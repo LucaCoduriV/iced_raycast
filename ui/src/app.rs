@@ -38,19 +38,8 @@ impl Raycast {
             }
             Message::Run => {
                 if let Some(entry) = self.prism.get_selected_entry().cloned() {
-                    // Plugin results act through an effect (e.g. copy the
-                    // calculator answer) rather than launching a process.
-                    if let Some(effect) = entry.entry.entity.primary_effect() {
-                        match effect {
-                            core::ActionEffect::CopyToClipboard(text) => {
-                                if let Err(e) = core::clipboard::copy(&text) {
-                                    eprintln!("Failed to copy to clipboard: {}", e);
-                                }
-                            }
-                        }
-                        return iced::exit();
-                    }
-
+                    // Plugin-result effects (copy / push view / close) are handled
+                    // inside Prism; this path only launches apps and commands.
                     self.app_state.record_usage(&entry.entry.entity);
 
                     let argument = self.prism.get_argument();

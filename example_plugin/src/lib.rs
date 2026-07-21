@@ -1,59 +1,227 @@
 //! Example third-party plugin, compiled as a `cdylib` and loaded at runtime.
 //!
-//! It demonstrates the whole contract: implement [`HostPlugin`], decide when to
-//! engage from the query, build results with actions, and export the root
-//! module. Trigger it by typing `up <text>` in the launcher — it offers to copy
-//! the uppercased text to the clipboard.
+//! It showcases the whole contract: producing list results, and pushing each of
+//! the three interactive view layouts. Triggers (type in the launcher):
+//!
+//! - `up <text>`  — copy the uppercased text (list result, copy effect)
+//! - `gif <term>` — open a searchable **grid** view (the GIF example)
+//! - `detail`     — open a **detail** view
+//! - `form`       — open a **form** view
 //!
 //! Build with `cargo build -p example_plugin`, then drop the resulting
-//! `libexample_plugin.so` (`.dll` / `.dylib`) into the launcher's plugins
-//! directory.
+//! `libexample_plugin.so` (`.dll` / `.dylib`) into the launcher's plugins dir.
 
 use plugin_api::{
-    AbiActionEffect, AbiPluginAction, AbiPluginResult, HostPlugin, export_plugin,
+    AbiActionEffect, AbiFieldKind, AbiFieldValueKind, AbiFormField, AbiGridItem, AbiImageSource,
+    AbiKeyValue, AbiPluginAction, AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent,
+    AbiViewEventKind, AbiViewResponse, HostPlugin, export_plugin,
     std_types::{RNone, RSome, RStr, RString, RVec},
 };
 
-const KEYWORD: &str = "up ";
+const PLUGIN_ID: &str = "example.showcase";
 
 #[derive(Default)]
-struct UppercasePlugin;
+struct ShowcasePlugin;
 
-impl HostPlugin for UppercasePlugin {
+impl HostPlugin for ShowcasePlugin {
     fn id(&self) -> RString {
-        "example.uppercase".into()
+        PLUGIN_ID.into()
     }
 
     fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult> {
         let query = query.as_str();
+        let mut results: Vec<AbiPluginResult> = Vec::new();
 
-        // Self-filter: only engage for the "up " keyword prefix.
-        let Some(rest) = query.strip_prefix(KEYWORD) else {
-            return RVec::new();
-        };
-
-        let rest = rest.trim();
-        if rest.is_empty() {
-            return RVec::new();
+        if let Some(rest) = query.strip_prefix("up ") {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                results.push(uppercase_result(rest));
+            }
         }
 
-        let upper = rest.to_uppercase();
+        if query == "gif" || query.starts_with("gif ") {
+            let term = query.strip_prefix("gif").unwrap_or("").trim();
+            results.push(open_result(
+                "GIF Grid",
+                "Browse GIFs in a grid",
+                'G',
+                AbiActionEffect::PushView(gif_view(term)),
+            ));
+        }
 
-        let result = AbiPluginResult {
-            source_id: "example.uppercase".into(),
-            section: "Uppercase".into(),
-            title: RString::from(upper.as_str()),
-            subtitle: RSome(RString::from(rest)),
-            icon_path: RNone,
-            glyph: RSome(u32::from('A')),
-            actions: RVec::from(vec![AbiPluginAction {
-                label: "Copy to Clipboard".into(),
-                effect: AbiActionEffect::CopyToClipboard(RString::from(upper.as_str())),
-            }]),
-        };
+        if query == "detail" {
+            results.push(open_result(
+                "Detail Demo",
+                "Open a detail view",
+                'D',
+                AbiActionEffect::PushView(detail_view()),
+            ));
+        }
 
-        RVec::from(vec![result])
+        if query == "form" || query == "snippet" {
+            results.push(open_result(
+                "Create Snippet",
+                "Open a form view",
+                'F',
+                AbiActionEffect::PushView(form_view()),
+            ));
+        }
+
+        results.into()
+    }
+
+    fn handle_event(&self, event: AbiViewEvent) -> AbiViewResponse {
+        match (event.view_id.as_str(), event.kind) {
+            // Grid: typing re-queries; activating a cell copies its link.
+            ("gif-grid", AbiViewEventKind::Search(term)) => {
+                AbiViewResponse::Update(gif_view(term.as_str()))
+            }
+            ("gif-grid", AbiViewEventKind::Activate(id)) => {
+                let link = format!("https://gifs.example/{id}");
+                AbiViewResponse::Effect(AbiActionEffect::CopyToClipboard(RString::from(link)))
+            }
+            // Form: submit copies the collected values.
+            ("snippet-form", AbiViewEventKind::Submit(values)) => {
+                let text = values
+                    .iter()
+                    .map(|value| {
+                        let rendered = match &value.value {
+                            AbiFieldValueKind::Text(text) => text.to_string(),
+                            AbiFieldValueKind::Toggle(on) => on.to_string(),
+                            AbiFieldValueKind::Choice(index) => index.to_string(),
+                        };
+                        format!("{} = {}", value.id, rendered)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                AbiViewResponse::Effect(AbiActionEffect::CopyToClipboard(RString::from(text)))
+            }
+            // Detail: primary action just closes the launcher.
+            ("detail-demo", AbiViewEventKind::Submit(_)) => {
+                AbiViewResponse::Effect(AbiActionEffect::Close)
+            }
+            _ => AbiViewResponse::None,
+        }
     }
 }
 
-export_plugin!(UppercasePlugin);
+fn uppercase_result(text: &str) -> AbiPluginResult {
+    let upper = text.to_uppercase();
+    AbiPluginResult {
+        source_id: PLUGIN_ID.into(),
+        section: "Uppercase".into(),
+        title: RString::from(upper.as_str()),
+        subtitle: RSome(RString::from(text)),
+        icon_path: RNone,
+        glyph: RSome(u32::from('A')),
+        actions: RVec::from(vec![AbiPluginAction {
+            label: "Copy to Clipboard".into(),
+            effect: AbiActionEffect::CopyToClipboard(RString::from(upper.as_str())),
+        }]),
+    }
+}
+
+/// A list result whose default action pushes a view.
+fn open_result(title: &str, subtitle: &str, glyph: char, effect: AbiActionEffect) -> AbiPluginResult {
+    AbiPluginResult {
+        source_id: PLUGIN_ID.into(),
+        section: "Showcase".into(),
+        title: RString::from(title),
+        subtitle: RSome(RString::from(subtitle)),
+        icon_path: RNone,
+        glyph: RSome(u32::from(glyph)),
+        actions: RVec::from(vec![AbiPluginAction {
+            label: "Open".into(),
+            effect,
+        }]),
+    }
+}
+
+fn gif_view(term: &str) -> AbiView {
+    let label = if term.is_empty() { "trending" } else { term };
+
+    let items: RVec<AbiGridItem> = (1..=8)
+        .map(|i| AbiGridItem {
+            id: RString::from(format!("{label}-{i}")),
+            title: RString::from(format!("{label} #{i}")),
+            subtitle: RNone,
+            image: AbiImageSource::None,
+        })
+        .collect();
+
+    AbiView {
+        view_id: "gif-grid".into(),
+        title: "GIFs".into(),
+        search_placeholder: RSome("Search GIFs…".into()),
+        submit_label: RSome("Copy Link".into()),
+        body: AbiViewBody::Grid { columns: 4, items },
+    }
+}
+
+fn detail_view() -> AbiView {
+    AbiView {
+        view_id: "detail-demo".into(),
+        title: "Detail Demo".into(),
+        search_placeholder: RNone,
+        submit_label: RSome("Close".into()),
+        body: AbiViewBody::Detail {
+            body: RString::from(
+                "This is a detail view rendered entirely from plugin data.\n\n\
+                 It supports multiple paragraphs of body text alongside a \
+                 metadata sidebar on the right.",
+            ),
+            metadata: RVec::from(vec![
+                AbiKeyValue { key: "Type".into(), value: "Demo".into() },
+                AbiKeyValue { key: "Author".into(), value: "example".into() },
+                AbiKeyValue { key: "Version".into(), value: "0.1.0".into() },
+            ]),
+        },
+    }
+}
+
+fn form_view() -> AbiView {
+    AbiView {
+        view_id: "snippet-form".into(),
+        title: "Create Snippet".into(),
+        search_placeholder: RNone,
+        submit_label: RSome("Create Snippet".into()),
+        body: AbiViewBody::Form {
+            fields: RVec::from(vec![
+                AbiFormField {
+                    id: "name".into(),
+                    label: "Name".into(),
+                    kind: AbiFieldKind::Text("React Boilerplate".into()),
+                },
+                AbiFormField {
+                    id: "keyword".into(),
+                    label: "Keyword".into(),
+                    kind: AbiFieldKind::Text("rb".into()),
+                },
+                AbiFormField {
+                    id: "type".into(),
+                    label: "Type".into(),
+                    kind: AbiFieldKind::Dropdown {
+                        options: RVec::from(vec![
+                            RString::from("Text"),
+                            RString::from("Code"),
+                            RString::from("Link"),
+                        ]),
+                        selected: 0,
+                    },
+                },
+                AbiFormField {
+                    id: "auto_expand".into(),
+                    label: "Auto-expand".into(),
+                    kind: AbiFieldKind::Toggle(true),
+                },
+                AbiFormField {
+                    id: "snippet".into(),
+                    label: "Snippet".into(),
+                    kind: AbiFieldKind::TextArea("import React from 'react';".into()),
+                },
+            ]),
+        },
+    }
+}
+
+export_plugin!(ShowcasePlugin);
