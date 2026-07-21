@@ -30,6 +30,9 @@ pub struct Command {
     pub category: String,
     pub needs_argument: bool,
     pub argument_placeholder: Option<String>,
+    /// Offered at the bottom of the list (using the typed query as its argument)
+    /// so it can always be run on whatever the user typed.
+    pub fallback: bool,
 }
 
 /// A single result surfaced by a [`Plugin`] for the current query.

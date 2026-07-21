@@ -89,6 +89,7 @@ fn convert_command(command: AbiCommand) -> Command {
             .argument_placeholder
             .into_option()
             .map(|s| s.to_string()),
+        fallback: command.fallback,
     }
 }
 
@@ -201,13 +202,13 @@ mod tests {
             return;
         };
 
-        // Registered as a searchable command that takes an argument.
+        // Registered as a fallback command (offered on any typed query).
         assert!(
             google
                 .commands()
                 .iter()
-                .any(|c| c.title == "Search Google" && c.needs_argument),
-            "google command not registered"
+                .any(|c| c.title == "Search Google" && c.fallback),
+            "google command not registered as a fallback"
         );
 
         match google.run_command("search", Some("rust iced")) {

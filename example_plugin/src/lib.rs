@@ -138,6 +138,7 @@ fn command(
         } else {
             RNone
         },
+        fallback: false,
     }
 }
 

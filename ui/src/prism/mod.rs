@@ -134,9 +134,23 @@ impl Prism {
                     self.state
                         .all_entries
                         .iter()
+                        // Fallback commands are only offered at the bottom.
+                        .filter(|e| !e.entry.entity.is_fallback_command())
                         .filter(|e| SearchEngine::matches(&e.search_haystack, &query_lower))
                         .cloned(),
                 );
+
+                // Offer fallback commands (e.g. "Search Google") on whatever the
+                // user typed, so they can always act on the raw query.
+                if !self.state.query.is_empty() {
+                    for candidate in &self.state.all_entries {
+                        if let Some(entity) = candidate.entry.entity.fallback_for(&self.state.query)
+                        {
+                            entries.push(PrismEntry::from(ListEntry::from(entity)));
+                        }
+                    }
+                }
+
                 self.state.entries = entries;
 
                 Task::batch(vec![
@@ -240,10 +254,11 @@ impl Prism {
                         entity
                             .command_ref()
                             .map(|(p, c)| (p.to_string(), c.to_string())),
+                        entity.fallback_query().map(str::to_string),
                     )
                 });
 
-                let Some((needs_argument, name, command)) = selection else {
+                let Some((needs_argument, name, command, fallback_query)) = selection else {
                     return Task::none();
                 };
 
@@ -259,7 +274,9 @@ impl Prism {
 
                 // Plugin command: record usage, run it, and apply the effect.
                 if let Some((plugin_id, command_id)) = command {
-                    let argument = self.get_argument();
+                    // A fallback runs on the typed query; a normal command uses
+                    // the argument input.
+                    let argument = fallback_query.or_else(|| self.get_argument());
                     if let Some(entry) = self.get_selected_entry() {
                         app_state.record_usage(&entry.entry.entity);
                     }

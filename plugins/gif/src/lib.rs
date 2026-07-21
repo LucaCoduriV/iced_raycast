@@ -40,6 +40,7 @@ impl HostPlugin for GifPlugin {
             category: "GIF".into(),
             needs_argument: false,
             argument_placeholder: RNone,
+            fallback: false,
         }])
     }
 

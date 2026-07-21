@@ -108,6 +108,9 @@ pub struct AbiCommand {
     /// Whether the command prompts for an argument before running.
     pub needs_argument: bool,
     pub argument_placeholder: ROption<RString>,
+    /// When true, this command is offered at the bottom of the list when the
+    /// query matches nothing else, using the typed text as its argument.
+    pub fallback: bool,
 }
 
 /// Where a grid cell's image comes from.

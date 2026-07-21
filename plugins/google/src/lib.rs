@@ -28,6 +28,8 @@ impl HostPlugin for GooglePlugin {
             category: "Web Search".into(),
             needs_argument: true,
             argument_placeholder: RSome("Search query…".into()),
+            // Always offered at the bottom, running on whatever was typed.
+            fallback: true,
         }])
     }
 

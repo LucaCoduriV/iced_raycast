@@ -29,10 +29,12 @@ const APPLICATION: &str = "iced_raycast";
 #[derive(Debug, Clone)]
 pub enum Entity {
     Application(App),
-    /// A static command contributed by a plugin.
+    /// A static command contributed by a plugin. `fallback_query` is set when
+    /// this is a fallback offered for the current (non-matching) query.
     Command {
         plugin_id: String,
         command: Command,
+        fallback_query: Option<String>,
     },
     /// A dynamic result produced by a [`Plugin`] for the current query.
     Plugin(PluginResult),
@@ -50,6 +52,11 @@ impl Entity {
     pub fn description(&self) -> Option<&str> {
         match self {
             Entity::Application(app) => app.description(),
+            // A fallback shows the query it will run on.
+            Entity::Command {
+                fallback_query: Some(query),
+                ..
+            } => Some(query),
             Entity::Command { command, .. } => command.subtitle.as_deref(),
             Entity::Plugin(result) => result.subtitle.as_deref(),
         }
@@ -82,6 +89,11 @@ impl Entity {
 
     pub fn needs_argument(&self) -> bool {
         match self {
+            // A fallback already has its argument (the typed query).
+            Entity::Command {
+                fallback_query: Some(_),
+                ..
+            } => false,
             Entity::Command { command, .. } => command.needs_argument,
             _ => false,
         }
@@ -172,9 +184,92 @@ impl Entity {
     /// `(plugin_id, command_id)` when this entity is a plugin command.
     pub fn command_ref(&self) -> Option<(&str, &str)> {
         match self {
-            Entity::Command { plugin_id, command } => Some((plugin_id, &command.id)),
+            Entity::Command {
+                plugin_id, command, ..
+            } => Some((plugin_id, &command.id)),
             _ => None,
         }
+    }
+
+    /// Whether this is a fallback command in its un-materialized (list) form.
+    /// Such commands are hidden from the normal filtered list and only offered
+    /// as fallbacks.
+    pub fn is_fallback_command(&self) -> bool {
+        matches!(
+            self,
+            Entity::Command { command, fallback_query: None, .. } if command.fallback
+        )
+    }
+
+    /// The typed query baked into a fallback command, if any (used as the
+    /// argument on activation instead of prompting).
+    pub fn fallback_query(&self) -> Option<&str> {
+        match self {
+            Entity::Command {
+                fallback_query: Some(query),
+                ..
+            } => Some(query),
+            _ => None,
+        }
+    }
+
+    /// If this is a fallback-capable command, materialize a fallback instance
+    /// for `query` (to append at the bottom of the results).
+    pub fn fallback_for(&self, query: &str) -> Option<Entity> {
+        match self {
+            Entity::Command {
+                plugin_id,
+                command,
+                fallback_query: None,
+            } if command.fallback => Some(Entity::Command {
+                plugin_id: plugin_id.clone(),
+                command: command.clone(),
+                fallback_query: Some(query.to_string()),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn google_fallback() -> Entity {
+        Entity::Command {
+            plugin_id: "web.google".to_string(),
+            command: Command {
+                id: "search".to_string(),
+                title: "Search Google".to_string(),
+                subtitle: None,
+                keywords: vec![],
+                icon: None,
+                glyph: None,
+                category: "Web Search".to_string(),
+                needs_argument: true,
+                argument_placeholder: None,
+                fallback: true,
+            },
+            fallback_query: None,
+        }
+    }
+
+    #[test]
+    fn fallback_materializes_on_query() {
+        let command = google_fallback();
+        // Hidden from the normal list until materialized.
+        assert!(command.is_fallback_command());
+
+        let fallback = command
+            .fallback_for("rust iced")
+            .expect("fallback should materialize");
+
+        assert!(!fallback.is_fallback_command());
+        assert_eq!(fallback.fallback_query(), Some("rust iced"));
+        // The typed query is the argument, so it never prompts.
+        assert!(!fallback.needs_argument());
+        assert_eq!(fallback.description(), Some("rust iced"));
+        assert_eq!(fallback.command_ref(), Some(("web.google", "search")));
     }
 }
 
@@ -187,7 +282,11 @@ pub fn get_entities(registry: &PluginRegistry) -> Vec<Entity> {
         .collect();
 
     for (plugin_id, command) in registry.commands() {
-        entities.push(Entity::Command { plugin_id, command });
+        entities.push(Entity::Command {
+            plugin_id,
+            command,
+            fallback_query: None,
+        });
     }
 
     entities
