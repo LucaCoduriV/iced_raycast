@@ -1,10 +1,10 @@
-//! Google search plugin. Type `g <query>` and press Enter to open the results
-//! in your default browser.
+//! Google search plugin. Lists a "Search Google" command; activating it prompts
+//! for a query and opens the results in your default browser.
 
 use plugin_api::{
     export_plugin,
-    std_types::{RNone, RSome, RStr, RString, RVec},
-    AbiActionEffect, AbiPluginAction, AbiPluginResult, HostPlugin,
+    std_types::{RNone, ROption, RSome, RStr, RString, RVec},
+    AbiActionEffect, AbiCommand, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "web.google";
@@ -17,30 +17,35 @@ impl HostPlugin for GooglePlugin {
         PLUGIN_ID.into()
     }
 
-    fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult> {
-        let Some(term) = query
-            .as_str()
-            .strip_prefix("g ")
-            .map(str::trim)
-            .filter(|term| !term.is_empty())
-        else {
-            return RVec::new();
-        };
-
-        let url = format!("https://www.google.com/search?q={}", encode(term));
-
-        RVec::from(vec![AbiPluginResult {
-            source_id: PLUGIN_ID.into(),
-            section: "Web Search".into(),
-            title: RString::from(format!("Search Google for “{term}”")),
-            subtitle: RSome("Open results in your browser".into()),
+    fn commands(&self) -> RVec<AbiCommand> {
+        RVec::from(vec![AbiCommand {
+            id: "search".into(),
+            title: "Search Google".into(),
+            subtitle: RSome("Open a web search in your browser".into()),
+            keywords: RVec::from(vec!["google".into(), "search".into(), "web".into()]),
             icon_path: RNone,
             glyph: RSome(u32::from('G')),
-            actions: RVec::from(vec![AbiPluginAction {
-                label: "Open in Browser".into(),
-                effect: AbiActionEffect::OpenUrl(RString::from(url)),
-            }]),
+            category: "Web Search".into(),
+            needs_argument: true,
+            argument_placeholder: RSome("Search query…".into()),
         }])
+    }
+
+    fn run_command(&self, command_id: RStr<'_>, argument: ROption<RString>) -> AbiActionEffect {
+        if command_id.as_str() != "search" {
+            return AbiActionEffect::None;
+        }
+
+        let term = argument
+            .into_option()
+            .map(|s| s.as_str().trim().to_string())
+            .unwrap_or_default();
+        if term.is_empty() {
+            return AbiActionEffect::None;
+        }
+
+        let url = format!("https://www.google.com/search?q={}", encode(&term));
+        AbiActionEffect::OpenUrl(RString::from(url))
     }
 }
 

@@ -77,6 +77,8 @@ pub struct AbiPluginAction {
 #[repr(C)]
 #[derive(StableAbi, Debug, Clone)]
 pub enum AbiActionEffect {
+    /// Do nothing (default for commands a plugin doesn't handle).
+    None,
     /// Copy the given text to the system clipboard.
     CopyToClipboard(RString),
     /// Open a URL in the user's default browser.
@@ -85,6 +87,27 @@ pub enum AbiActionEffect {
     PushView(AbiView),
     /// Close the launcher.
     Close,
+}
+
+/// A statically-registered command a plugin contributes to the launcher's main
+/// list. Unlike per-query results, commands are always listed and searchable by
+/// their title and keywords (e.g. typing "gi" surfaces "Search GIFs").
+#[repr(C)]
+#[derive(StableAbi, Debug, Clone)]
+pub struct AbiCommand {
+    /// Stable id, passed back to `run_command` on activation.
+    pub id: RString,
+    pub title: RString,
+    pub subtitle: ROption<RString>,
+    /// Extra search terms (fuzzy-matched alongside the title).
+    pub keywords: RVec<RString>,
+    pub icon_path: ROption<RString>,
+    pub glyph: ROption<u32>,
+    /// Right-hand category label shown in the list (e.g. "Web Search").
+    pub category: RString,
+    /// Whether the command prompts for an argument before running.
+    pub needs_argument: bool,
+    pub argument_placeholder: ROption<RString>,
 }
 
 /// Where a grid cell's image comes from.
@@ -244,8 +267,25 @@ pub trait HostPlugin: Send + Sync {
     /// Stable identifier for the plugin.
     fn id(&self) -> RString;
 
-    /// Results for `query`. Return an empty `RVec` when the query doesn't apply.
-    fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult>;
+    /// Statically-registered commands, listed and searchable in the main list.
+    /// Most plugins contribute their functionality here.
+    fn commands(&self) -> RVec<AbiCommand> {
+        RVec::new()
+    }
+
+    /// Activate the command `command_id`, optionally with an `argument`, and
+    /// return the effect to perform (open a view, copy, open a URL, …).
+    fn run_command(&self, command_id: RStr<'_>, argument: ROption<RString>) -> AbiActionEffect {
+        let _ = (command_id, argument);
+        AbiActionEffect::None
+    }
+
+    /// Live, per-keystroke results (e.g. a calculator). Return an empty `RVec`
+    /// when the query doesn't apply. Most plugins can leave this empty.
+    fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult> {
+        let _ = query;
+        RVec::new()
+    }
 
     /// Handle an interaction within one of this plugin's views. Plugins that
     /// only produce list results can ignore this (the default returns `None`).

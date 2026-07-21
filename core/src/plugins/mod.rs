@@ -14,16 +14,22 @@ pub use loader::plugins_dir;
 
 use crate::common::Image;
 
-/// Legacy static command entry. Predates [`Plugin`]; kept until commands are
-/// reworked as plugin-provided results.
+/// A statically-registered command a plugin contributes to the main list.
+/// Listed and searchable by title + keywords (unlike per-query results).
 #[derive(Debug, Clone)]
-pub struct CommandEntity {
-    pub id: u64,
-    pub name: String,
-    pub alias: Option<String>,
-    pub description: Option<String>,
-    pub image: Option<Image>,
+pub struct Command {
+    /// Stable id, passed back to [`Plugin::run_command`] on activation.
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    /// Extra search terms matched alongside the title.
+    pub keywords: Vec<String>,
+    pub icon: Option<Image>,
+    pub glyph: Option<char>,
+    /// Right-hand category label shown in the list.
+    pub category: String,
     pub needs_argument: bool,
+    pub argument_placeholder: Option<String>,
 }
 
 /// A single result surfaced by a [`Plugin`] for the current query.
@@ -58,6 +64,8 @@ pub struct PluginAction {
 /// executed with the right framework primitives (e.g. clipboard access).
 #[derive(Debug, Clone)]
 pub enum ActionEffect {
+    /// Do nothing.
+    None,
     /// Copy the given text to the system clipboard.
     CopyToClipboard(String),
     /// Open a URL in the user's default browser.
@@ -192,14 +200,28 @@ pub enum ViewResponse {
     Effect(ActionEffect),
 }
 
-/// A query-driven source of results, optionally backed by interactive views.
+/// A source of launcher functionality: static commands, live query results, and
+/// interactive views.
 pub trait Plugin: Send + Sync {
     /// Stable identifier for the plugin.
     fn id(&self) -> &str;
-    /// Results for `query`. Return an empty vec when the query doesn't apply.
-    fn query(&self, query: &str) -> Vec<PluginResult>;
-    /// Handle an interaction within one of this plugin's views. Plugins that
-    /// only produce list results can ignore this.
+
+    /// Statically-registered commands, listed and searchable in the main list.
+    fn commands(&self) -> Vec<Command> {
+        Vec::new()
+    }
+
+    /// Activate a command (optionally with an argument) and return its effect.
+    fn run_command(&self, _command_id: &str, _argument: Option<&str>) -> ActionEffect {
+        ActionEffect::None
+    }
+
+    /// Live, per-keystroke results (e.g. a calculator).
+    fn query(&self, _query: &str) -> Vec<PluginResult> {
+        Vec::new()
+    }
+
+    /// Handle an interaction within one of this plugin's views.
     fn handle_event(&self, _event: ViewEvent) -> ViewResponse {
         ViewResponse::None
     }
@@ -232,7 +254,35 @@ impl PluginRegistry {
         self.plugins.push(plugin);
     }
 
-    /// Collect results from every plugin for `query`, in registration order.
+    /// Every static command from every plugin, tagged with its plugin id.
+    pub fn commands(&self) -> Vec<(String, Command)> {
+        self.plugins
+            .iter()
+            .flat_map(|plugin| {
+                let plugin_id = plugin.id().to_string();
+                plugin
+                    .commands()
+                    .into_iter()
+                    .map(move |command| (plugin_id.clone(), command))
+            })
+            .collect()
+    }
+
+    /// Activate a command on its owning plugin.
+    pub fn run_command(
+        &self,
+        plugin_id: &str,
+        command_id: &str,
+        argument: Option<&str>,
+    ) -> ActionEffect {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.id() == plugin_id)
+            .map(|plugin| plugin.run_command(command_id, argument))
+            .unwrap_or(ActionEffect::None)
+    }
+
+    /// Collect live results from every plugin for `query`, in registration order.
     pub fn query(&self, query: &str) -> Vec<PluginResult> {
         self.plugins
             .iter()

@@ -11,9 +11,9 @@
 
 use plugin_api::{
     export_plugin,
-    std_types::{RNone, RSome, RStr, RString, RVec},
-    AbiActionEffect, AbiGridItem, AbiImageSource, AbiPluginAction, AbiPluginResult, AbiView,
-    AbiViewBody, AbiViewEvent, AbiViewEventKind, AbiViewResponse, HostPlugin,
+    std_types::{RNone, ROption, RSome, RStr, RString, RVec},
+    AbiActionEffect, AbiCommand, AbiGridItem, AbiImageSource, AbiView, AbiViewBody, AbiViewEvent,
+    AbiViewEventKind, AbiViewResponse, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "media.gif";
@@ -29,25 +29,26 @@ impl HostPlugin for GifPlugin {
         PLUGIN_ID.into()
     }
 
-    fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult> {
-        let query = query.as_str().trim();
-        if query != "gif" && query != "gifs" {
-            return RVec::new();
-        }
-
-        let provider = Provider::detect();
-        RVec::from(vec![AbiPluginResult {
-            source_id: PLUGIN_ID.into(),
-            section: "Media".into(),
+    fn commands(&self) -> RVec<AbiCommand> {
+        RVec::from(vec![AbiCommand {
+            id: "search".into(),
             title: "Search GIFs".into(),
-            subtitle: RSome(RString::from(provider.subtitle())),
+            subtitle: RSome(RString::from(Provider::detect().subtitle())),
+            keywords: RVec::from(vec!["gif".into(), "gifs".into(), "giphy".into()]),
             icon_path: RNone,
             glyph: RSome(u32::from('G')),
-            actions: RVec::from(vec![AbiPluginAction {
-                label: "Open".into(),
-                effect: AbiActionEffect::PushView(grid_view(provider.title(), RVec::new())),
-            }]),
+            category: "GIF".into(),
+            needs_argument: false,
+            argument_placeholder: RNone,
         }])
+    }
+
+    fn run_command(&self, command_id: RStr<'_>, _argument: ROption<RString>) -> AbiActionEffect {
+        if command_id.as_str() == "search" {
+            AbiActionEffect::PushView(grid_view(Provider::detect().title(), RVec::new()))
+        } else {
+            AbiActionEffect::None
+        }
     }
 
     fn handle_event(&self, event: AbiViewEvent) -> AbiViewResponse {

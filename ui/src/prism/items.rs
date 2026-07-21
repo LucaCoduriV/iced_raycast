@@ -21,6 +21,10 @@ impl ListEntry {
         self.entity.as_ref().description()
     }
 
+    pub fn keywords(&self) -> &[String] {
+        self.entity.as_ref().keywords()
+    }
+
     /// Singular label shown on the right of the row ("Application", "Calculator").
     pub fn kind_label(&self) -> &str {
         self.entity.kind_label()

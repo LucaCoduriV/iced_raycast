@@ -66,6 +66,10 @@ impl From<ListEntry> for PrismEntry {
             search_haystack.push('\n');
             search_haystack.push_str(&desc.to_lowercase());
         }
+        for keyword in entry.keywords() {
+            search_haystack.push('\n');
+            search_haystack.push_str(&keyword.to_lowercase());
+        }
 
         Self {
             entry,

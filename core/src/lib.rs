@@ -1,10 +1,10 @@
-use crate::plugins::CommandEntity;
+use crate::plugins::Command;
 
 pub use crate::common::Image;
 pub use crate::plugins::{
-    ActionEffect, FieldKind, FieldValue, FieldValueKind, FormField, GridItem, ImageSource,
-    KeyValue, Plugin, PluginAction, PluginRegistry, PluginResult, View, ViewBody, ViewEvent,
-    ViewEventKind, ViewResponse,
+    ActionEffect, Command as PluginCommand, FieldKind, FieldValue, FieldValueKind, FormField,
+    GridItem, ImageSource, KeyValue, Plugin, PluginAction, PluginRegistry, PluginResult, View,
+    ViewBody, ViewEvent, ViewEventKind, ViewResponse,
 };
 use anyhow::Result;
 pub use application::App;
@@ -24,10 +24,16 @@ const QUALIFIER: &str = "com";
 const ORGANISATION: &str = "lcvitor";
 const APPLICATION: &str = "iced_raycast";
 
+/// A single listed, activatable item. Applications and plugin-provided commands
+/// are the searchable entries; `Plugin` holds a live per-query result.
 #[derive(Debug, Clone)]
 pub enum Entity {
     Application(App),
-    Command(CommandEntity),
+    /// A static command contributed by a plugin.
+    Command {
+        plugin_id: String,
+        command: Command,
+    },
     /// A dynamic result produced by a [`Plugin`] for the current query.
     Plugin(PluginResult),
 }
@@ -36,7 +42,7 @@ impl Entity {
     pub fn name(&self) -> &str {
         match self {
             Entity::Application(app) => app.name(),
-            Entity::Command(cmd) => &cmd.name,
+            Entity::Command { command, .. } => &command.title,
             Entity::Plugin(result) => &result.title,
         }
     }
@@ -44,42 +50,48 @@ impl Entity {
     pub fn description(&self) -> Option<&str> {
         match self {
             Entity::Application(app) => app.description(),
-            Entity::Command(cmd) => cmd.description.as_deref(),
+            Entity::Command { command, .. } => command.subtitle.as_deref(),
             Entity::Plugin(result) => result.subtitle.as_deref(),
+        }
+    }
+
+    /// Extra search terms, matched alongside the name/description.
+    pub fn keywords(&self) -> &[String] {
+        match self {
+            Entity::Command { command, .. } => &command.keywords,
+            _ => &[],
         }
     }
 
     pub fn icon(&self) -> Option<Image> {
         match self {
             Entity::Application(app) => app.icon(),
-            Entity::Command(cmd) => cmd.image.clone(),
+            Entity::Command { command, .. } => command.icon.clone(),
             Entity::Plugin(result) => result.icon.clone(),
         }
     }
 
+    /// Launch a system application. Commands and plugin results act through
+    /// effects instead (see [`Entity::command_ref`] / [`Entity::primary_effect`]).
     pub fn execute(&self, argument: Option<String>) -> Result<()> {
         match self {
             Entity::Application(app) => app.execute(argument),
-            Entity::Command(cmd) => {
-                // TODO: dispatch to the owning plugin once commands become
-                // plugin-provided results.
-                eprintln!(
-                    "Executing command {} with argument {:?}",
-                    cmd.name, argument
-                );
-                Ok(())
-            }
-            // Plugin results act through their effect (see `primary_effect`),
-            // not a synchronous launch.
-            Entity::Plugin(_) => Ok(()),
+            _ => Ok(()),
         }
     }
 
     pub fn needs_argument(&self) -> bool {
         match self {
-            Entity::Application(_) => false,
-            Entity::Command(cmd) => cmd.needs_argument,
-            Entity::Plugin(_) => false,
+            Entity::Command { command, .. } => command.needs_argument,
+            _ => false,
+        }
+    }
+
+    /// Placeholder text for the argument input, if this entity takes one.
+    pub fn argument_placeholder(&self) -> Option<&str> {
+        match self {
+            Entity::Command { command, .. } => command.argument_placeholder.as_deref(),
+            _ => None,
         }
     }
 
@@ -87,27 +99,26 @@ impl Entity {
     pub fn kind_label(&self) -> &str {
         match self {
             Entity::Application(_) => "Application",
-            Entity::Command(_) => "Command",
+            Entity::Command { command, .. } => &command.category,
             Entity::Plugin(result) => &result.section,
         }
     }
 
-    /// Plural section header this entity is grouped under.
+    /// Section header this entity is grouped under.
     pub fn section(&self) -> &str {
         match self {
             Entity::Application(_) => "Applications",
-            Entity::Command(_) => "Commands",
+            Entity::Command { .. } => "Commands",
             Entity::Plugin(result) => &result.section,
         }
     }
 
-    /// Ordering of sections in the list: plugin results first, then apps, then
-    /// commands.
+    /// Ordering of sections: live results first, then apps, then commands.
     pub fn section_rank(&self) -> u8 {
         match self {
             Entity::Plugin(_) => 0,
             Entity::Application(_) => 1,
-            Entity::Command(_) => 2,
+            Entity::Command { .. } => 2,
         }
     }
 
@@ -115,7 +126,7 @@ impl Entity {
     pub fn primary_action_label(&self) -> &str {
         match self {
             Entity::Application(_) => "Open",
-            Entity::Command(_) => "Run Command",
+            Entity::Command { .. } => "Run",
             Entity::Plugin(result) => result
                 .actions
                 .first()
@@ -124,8 +135,7 @@ impl Entity {
         }
     }
 
-    /// The effect of the default action for a plugin result, if any. Apps and
-    /// commands return `None` and are launched via [`Entity::execute`] instead.
+    /// The effect of the default action for a live plugin result, if any.
     pub fn primary_effect(&self) -> Option<ActionEffect> {
         match self {
             Entity::Plugin(result) => result.actions.first().map(|action| action.effect.clone()),
@@ -133,7 +143,7 @@ impl Entity {
         }
     }
 
-    /// Plugin-defined actions for the actions menu (empty for apps/commands).
+    /// Plugin-defined actions for the actions menu (empty otherwise).
     pub fn plugin_actions(&self) -> &[PluginAction] {
         match self {
             Entity::Plugin(result) => &result.actions,
@@ -144,63 +154,41 @@ impl Entity {
     /// Glyph to render on the fallback tile, if the entity provides one.
     pub fn tile_glyph(&self) -> Option<char> {
         match self {
+            Entity::Command { command, .. } => command.glyph,
             Entity::Plugin(result) => result.glyph,
             _ => None,
         }
     }
 
-    /// Id of the plugin that produced this entity, for routing view events.
+    /// Id of the owning plugin, for routing commands and view events.
     pub fn plugin_source_id(&self) -> Option<&str> {
         match self {
+            Entity::Command { plugin_id, .. } => Some(plugin_id),
             Entity::Plugin(result) => Some(&result.source_id),
+            _ => None,
+        }
+    }
+
+    /// `(plugin_id, command_id)` when this entity is a plugin command.
+    pub fn command_ref(&self) -> Option<(&str, &str)> {
+        match self {
+            Entity::Command { plugin_id, command } => Some((plugin_id, &command.id)),
             _ => None,
         }
     }
 }
 
-pub fn get_entities() -> Vec<Entity> {
-    // `mut` is only needed for the debug-only fake commands below.
-    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+/// The static, searchable entries: system applications plus every command
+/// registered by the plugins.
+pub fn get_entities(registry: &PluginRegistry) -> Vec<Entity> {
     let mut entities: Vec<Entity> = App::lookup_applications()
         .into_iter()
         .map(Entity::Application)
         .collect();
 
-    // Placeholder commands used to exercise the UI (including the
-    // needs-argument flow) while the plugin system is being built. Excluded
-    // from release builds so they never ship as real entries.
-    #[cfg(debug_assertions)]
-    entities.extend(fake_commands());
+    for (plugin_id, command) in registry.commands() {
+        entities.push(Entity::Command { plugin_id, command });
+    }
 
     entities
-}
-
-#[cfg(debug_assertions)]
-fn fake_commands() -> Vec<Entity> {
-    vec![
-        Entity::Command(CommandEntity {
-            id: 0,
-            name: "Fake Command One".to_string(),
-            alias: None,
-            description: Some("This is the first fake command.".to_string()),
-            image: None,
-            needs_argument: false,
-        }),
-        Entity::Command(CommandEntity {
-            id: 1,
-            name: "Fake Command Two".to_string(),
-            alias: Some("fct".to_string()),
-            description: Some("This is the second fake command, with an alias.".to_string()),
-            image: None,
-            needs_argument: false,
-        }),
-        Entity::Command(CommandEntity {
-            id: 2,
-            name: "Fake Command Three".to_string(),
-            alias: None,
-            description: Some("A third example of a fake command.".to_string()),
-            image: None,
-            needs_argument: true, // This one needs an argument
-        }),
-    ]
 }

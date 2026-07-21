@@ -13,10 +13,10 @@
 
 use plugin_api::{
     export_plugin,
-    std_types::{RNone, RSome, RStr, RString, RVec},
-    AbiActionEffect, AbiFieldKind, AbiFieldValueKind, AbiFormField, AbiGridItem, AbiImageSource,
-    AbiKeyValue, AbiPluginAction, AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent,
-    AbiViewEventKind, AbiViewResponse, HostPlugin,
+    std_types::{RNone, ROption, RSome, RStr, RString, RVec},
+    AbiActionEffect, AbiCommand, AbiFieldKind, AbiFieldValueKind, AbiFormField, AbiGridItem,
+    AbiImageSource, AbiKeyValue, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind,
+    AbiViewResponse, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "example.showcase";
@@ -29,45 +29,57 @@ impl HostPlugin for ShowcasePlugin {
         PLUGIN_ID.into()
     }
 
-    fn query(&self, query: RStr<'_>) -> RVec<AbiPluginResult> {
-        let query = query.as_str();
-        let mut results: Vec<AbiPluginResult> = Vec::new();
-
-        if let Some(rest) = query.strip_prefix("up ") {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                results.push(uppercase_result(rest));
-            }
-        }
-
-        if query == "grid" {
-            results.push(open_result(
+    fn commands(&self) -> RVec<AbiCommand> {
+        RVec::from(vec![
+            command(
+                "grid",
                 "Grid Demo",
                 "Open a searchable grid view",
                 'G',
-                AbiActionEffect::PushView(grid_view("")),
-            ));
-        }
-
-        if query == "detail" {
-            results.push(open_result(
+                &["grid"],
+                false,
+            ),
+            command(
+                "detail",
                 "Detail Demo",
                 "Open a detail view",
                 'D',
-                AbiActionEffect::PushView(detail_view()),
-            ));
-        }
-
-        if query == "form" || query == "snippet" {
-            results.push(open_result(
+                &["detail"],
+                false,
+            ),
+            command(
+                "form",
                 "Create Snippet",
                 "Open a form view",
                 'F',
-                AbiActionEffect::PushView(form_view()),
-            ));
-        }
+                &["form", "snippet"],
+                false,
+            ),
+            command(
+                "uppercase",
+                "Uppercase Text",
+                "Copy your text uppercased",
+                'A',
+                &["uppercase", "upper"],
+                true,
+            ),
+        ])
+    }
 
-        results.into()
+    fn run_command(&self, command_id: RStr<'_>, argument: ROption<RString>) -> AbiActionEffect {
+        match command_id.as_str() {
+            "grid" => AbiActionEffect::PushView(grid_view("")),
+            "detail" => AbiActionEffect::PushView(detail_view()),
+            "form" => AbiActionEffect::PushView(form_view()),
+            "uppercase" => {
+                let text = argument
+                    .into_option()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                AbiActionEffect::CopyToClipboard(RString::from(text.to_uppercase()))
+            }
+            _ => AbiActionEffect::None,
+        }
     }
 
     fn handle_event(&self, event: AbiViewEvent) -> AbiViewResponse {
@@ -104,40 +116,28 @@ impl HostPlugin for ShowcasePlugin {
     }
 }
 
-fn uppercase_result(text: &str) -> AbiPluginResult {
-    let upper = text.to_uppercase();
-    AbiPluginResult {
-        source_id: PLUGIN_ID.into(),
-        section: "Uppercase".into(),
-        title: RString::from(upper.as_str()),
-        subtitle: RSome(RString::from(text)),
-        icon_path: RNone,
-        glyph: RSome(u32::from('A')),
-        actions: RVec::from(vec![AbiPluginAction {
-            label: "Copy to Clipboard".into(),
-            effect: AbiActionEffect::CopyToClipboard(RString::from(upper.as_str())),
-        }]),
-    }
-}
-
-/// A list result whose default action pushes a view.
-fn open_result(
+fn command(
+    id: &str,
     title: &str,
     subtitle: &str,
     glyph: char,
-    effect: AbiActionEffect,
-) -> AbiPluginResult {
-    AbiPluginResult {
-        source_id: PLUGIN_ID.into(),
-        section: "Showcase".into(),
+    keywords: &[&str],
+    needs_argument: bool,
+) -> AbiCommand {
+    AbiCommand {
+        id: RString::from(id),
         title: RString::from(title),
         subtitle: RSome(RString::from(subtitle)),
+        keywords: keywords.iter().map(|k| RString::from(*k)).collect(),
         icon_path: RNone,
         glyph: RSome(u32::from(glyph)),
-        actions: RVec::from(vec![AbiPluginAction {
-            label: "Open".into(),
-            effect,
-        }]),
+        category: "Demo".into(),
+        needs_argument,
+        argument_placeholder: if needs_argument {
+            RSome("Text to uppercase…".into())
+        } else {
+            RNone
+        },
     }
 }
 

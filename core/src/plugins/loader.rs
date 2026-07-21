@@ -11,17 +11,17 @@ use std::path::{Path, PathBuf};
 
 use abi_stable::{
     library::lib_header_from_path,
-    std_types::{RBox, RStr, RString},
+    std_types::{RBox, ROption, RStr, RString},
 };
 use directories::ProjectDirs;
 use plugin_api::{
-    AbiActionEffect, AbiFieldValue, AbiFieldValueKind, AbiFormField, AbiGridItem, AbiImageSource,
-    AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind, AbiViewResponse,
-    HostPlugin_TO, PluginModRef,
+    AbiActionEffect, AbiCommand, AbiFieldValue, AbiFieldValueKind, AbiFormField, AbiGridItem,
+    AbiImageSource, AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind,
+    AbiViewResponse, HostPlugin_TO, PluginModRef,
 };
 
 use super::{
-    ActionEffect, FieldKind, FieldValue, FieldValueKind, FormField, GridItem, ImageSource,
+    ActionEffect, Command, FieldKind, FieldValue, FieldValueKind, FormField, GridItem, ImageSource,
     KeyValue, Plugin, PluginAction, PluginResult, View, ViewBody, ViewEvent, ViewEventKind,
     ViewResponse,
 };
@@ -39,6 +39,22 @@ impl Plugin for DynamicPlugin {
         &self.id
     }
 
+    fn commands(&self) -> Vec<Command> {
+        self.inner
+            .commands()
+            .into_iter()
+            .map(convert_command)
+            .collect()
+    }
+
+    fn run_command(&self, command_id: &str, argument: Option<&str>) -> ActionEffect {
+        let argument = match argument {
+            Some(text) => ROption::RSome(RString::from(text)),
+            None => ROption::RNone,
+        };
+        convert_effect(self.inner.run_command(RStr::from(command_id), argument))
+    }
+
     fn query(&self, query: &str) -> Vec<PluginResult> {
         self.inner
             .query(RStr::from(query))
@@ -49,6 +65,30 @@ impl Plugin for DynamicPlugin {
 
     fn handle_event(&self, event: ViewEvent) -> ViewResponse {
         convert_response(self.inner.handle_event(to_abi_event(event)))
+    }
+}
+
+fn convert_command(command: AbiCommand) -> Command {
+    Command {
+        id: command.id.to_string(),
+        title: command.title.to_string(),
+        subtitle: command.subtitle.into_option().map(|s| s.to_string()),
+        keywords: command
+            .keywords
+            .into_iter()
+            .map(|k| k.to_string())
+            .collect(),
+        icon: command
+            .icon_path
+            .into_option()
+            .map(|path| Image::Path(path.to_string())),
+        glyph: command.glyph.into_option().and_then(char::from_u32),
+        category: command.category.to_string(),
+        needs_argument: command.needs_argument,
+        argument_placeholder: command
+            .argument_placeholder
+            .into_option()
+            .map(|s| s.to_string()),
     }
 }
 
@@ -110,37 +150,30 @@ mod tests {
         let plugins = load_plugins_from_dir(Path::new(&dir));
         assert!(!plugins.is_empty(), "no plugins loaded from {dir}");
 
-        // The example plugin engages on the "up " keyword and uppercases.
-        let results: Vec<_> = plugins.iter().flat_map(|p| p.query("up hello")).collect();
-        assert!(
-            results.iter().any(|r| r.title == "HELLO"),
-            "example plugin produced no matching result"
-        );
-
-        // It should stay quiet for unrelated queries.
-        let quiet: Vec<_> = plugins.iter().flat_map(|p| p.query("firefox")).collect();
-        assert!(
-            quiet.is_empty(),
-            "example plugin fired on an unrelated query"
-        );
-
-        // The example plugin's "grid" result pushes a grid view...
         let example = plugins
             .iter()
             .find(|p| p.id() == "example.showcase")
             .expect("example plugin not loaded");
-        let grid = example
-            .query("grid")
-            .into_iter()
-            .next()
-            .expect("no grid result");
+
+        // Commands are registered statically and searchable by keyword.
+        let commands = example.commands();
         assert!(
-            matches!(
-                grid.actions.first().map(|a| &a.effect),
-                Some(ActionEffect::PushView(view)) if matches!(view.body, ViewBody::Grid { .. })
-            ),
-            "grid result did not push a grid view"
+            commands.iter().any(|c| c.title == "Uppercase Text"
+                && c.keywords.iter().any(|k| k == "uppercase")),
+            "uppercase command not registered with keywords"
         );
+
+        // Uppercase runs with an argument and copies the result.
+        assert!(matches!(
+            example.run_command("uppercase", Some("hello")),
+            ActionEffect::CopyToClipboard(text) if text == "HELLO"
+        ));
+
+        // The "grid" command pushes a grid view...
+        assert!(matches!(
+            example.run_command("grid", None),
+            ActionEffect::PushView(view) if matches!(view.body, ViewBody::Grid { .. })
+        ));
 
         // ...and searching in it round-trips over the ABI to an updated grid.
         match example.handle_event(ViewEvent {
@@ -168,13 +201,17 @@ mod tests {
             return;
         };
 
-        let result = google
-            .query("g rust iced")
-            .into_iter()
-            .next()
-            .expect("no result");
-        match result.actions.first().map(|a| &a.effect) {
-            Some(ActionEffect::OpenUrl(url)) => {
+        // Registered as a searchable command that takes an argument.
+        assert!(
+            google
+                .commands()
+                .iter()
+                .any(|c| c.title == "Search Google" && c.needs_argument),
+            "google command not registered"
+        );
+
+        match google.run_command("search", Some("rust iced")) {
+            ActionEffect::OpenUrl(url) => {
                 assert!(
                     url.contains("google.com/search?q=rust+iced"),
                     "unexpected url: {url}"
@@ -195,10 +232,16 @@ mod tests {
             return;
         };
 
-        let result = gif.query("gif").into_iter().next().expect("no gif result");
+        // Registered as a keyword-searchable command that opens a grid.
+        assert!(
+            gif.commands()
+                .iter()
+                .any(|c| c.keywords.iter().any(|k| k == "gif")),
+            "gif command missing 'gif' keyword"
+        );
         assert!(matches!(
-            result.actions.first().map(|a| &a.effect),
-            Some(ActionEffect::PushView(view)) if matches!(view.body, ViewBody::Grid { .. })
+            gif.run_command("search", None),
+            ActionEffect::PushView(view) if matches!(view.body, ViewBody::Grid { .. })
         ));
 
         // An empty search returns a (message) grid rather than erroring.
@@ -278,6 +321,7 @@ fn convert_action(action: plugin_api::AbiPluginAction) -> PluginAction {
 
 fn convert_effect(effect: AbiActionEffect) -> ActionEffect {
     match effect {
+        AbiActionEffect::None => ActionEffect::None,
         AbiActionEffect::CopyToClipboard(text) => ActionEffect::CopyToClipboard(text.to_string()),
         AbiActionEffect::OpenUrl(url) => ActionEffect::OpenUrl(url.to_string()),
         AbiActionEffect::PushView(view) => ActionEffect::PushView(convert_view(view)),

@@ -60,17 +60,22 @@ impl Prism {
             anim_now: std::time::Instant::now(),
         };
 
+        let registry = Arc::new(PluginRegistry::with_builtins());
+
+        let load_registry = Arc::clone(&registry);
         let load_task = Task::perform(
-            async { get_entities().into_iter().map(From::from).collect() },
+            async move {
+                get_entities(&load_registry)
+                    .into_iter()
+                    .map(From::from)
+                    .collect::<Vec<_>>()
+            },
             PrismEvent::EntriesLoaded,
         );
         let init_task = Task::perform(async {}, |_| PrismEvent::Initialized);
 
         (
-            Self {
-                state,
-                registry: Arc::new(PluginRegistry::with_builtins()),
-            },
+            Self { state, registry },
             Task::batch(vec![load_task, init_task]),
         )
     }
@@ -228,16 +233,21 @@ impl Prism {
 
                 // Read what we need before mutating self below.
                 let selection = self.get_selected_entry().map(|entry| {
+                    let entity = &entry.entry.entity;
                     (
-                        entry.entry.entity.needs_argument(),
-                        entry.entry.name().to_string(),
+                        entity.needs_argument(),
+                        entity.name().to_string(),
+                        entity
+                            .command_ref()
+                            .map(|(p, c)| (p.to_string(), c.to_string())),
                     )
                 });
 
-                let Some((needs_argument, name)) = selection else {
+                let Some((needs_argument, name, command)) = selection else {
                     return Task::none();
                 };
 
+                // Commands (and apps) that take an argument open the input first.
                 if needs_argument && self.get_argument().is_none() {
                     self.state.show_argument_input = true;
                     self.state.is_argument_input_active = true;
@@ -246,6 +256,27 @@ impl Prism {
                 }
 
                 self.state.is_argument_input_active = false;
+
+                // Plugin command: record usage, run it, and apply the effect.
+                if let Some((plugin_id, command_id)) = command {
+                    let argument = self.get_argument();
+                    if let Some(entry) = self.get_selected_entry() {
+                        app_state.record_usage(&entry.entry.entity);
+                    }
+                    if let Some(arg) = argument.as_deref().filter(|a| !a.is_empty()) {
+                        app_state.record_argument(&name, arg);
+                    }
+                    if let Err(e) = app_state.save() {
+                        eprintln!("Failed to save state: {e}");
+                    }
+
+                    let effect =
+                        self.registry
+                            .run_command(&plugin_id, &command_id, argument.as_deref());
+                    return self.apply_effect(effect, plugin_id);
+                }
+
+                // Application: launch via the Run path.
                 Task::batch(vec![
                     focus(self.state.search_id.clone()),
                     Task::done(PrismEvent::Run),
@@ -764,6 +795,7 @@ impl Prism {
     /// Perform a plugin action effect: copy, close, or push a view.
     fn apply_effect(&mut self, effect: ActionEffect, plugin_id: String) -> Task<PrismEvent> {
         match effect {
+            ActionEffect::None => Task::none(),
             ActionEffect::CopyToClipboard(text) => copy_and_exit(&text),
             ActionEffect::OpenUrl(url) => {
                 if let Err(e) = core::open::url(&url) {
