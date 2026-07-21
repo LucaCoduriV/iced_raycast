@@ -17,3 +17,11 @@ anyhow = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 iced_layershell = "0.19"
+
+# Build the bundled plugin cdylibs alongside the app and copy them into the
+# user's plugins directory (see build.rs). Debug builds only.
+[build-dependencies]
+directories = "6.0.0"
+example_plugin = { path = "../example_plugin", artifact = "cdylib", lib = false }
+google_plugin = { path = "../plugins/google", artifact = "cdylib", lib = false }
+gif_plugin = { path = "../plugins/gif", artifact = "cdylib", lib = false }

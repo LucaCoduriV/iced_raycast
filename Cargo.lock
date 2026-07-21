@@ -2183,6 +2183,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "core",
+ "directories",
+ "example_plugin",
+ "gif_plugin",
+ "google_plugin",
  "iced",
  "iced_layershell",
 ]

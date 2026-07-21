@@ -1,0 +1,4 @@
+# Enable artifact dependencies (bindeps) so the app's build.rs can bundle and
+# install the plugin cdylibs. Requires a nightly toolchain.
+[unstable]
+bindeps = true
