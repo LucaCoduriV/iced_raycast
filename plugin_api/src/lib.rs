@@ -97,6 +97,8 @@ pub enum AbiImageSource {
     Path(RString),
     /// Encoded image bytes (png/jpeg/gif/…).
     Bytes(RVec<u8>),
+    /// A remote URL the host fetches (and caches) asynchronously.
+    Url(RString),
 }
 
 /// A key/value row in a detail view's metadata sidebar.
@@ -209,12 +211,15 @@ pub struct AbiViewEvent {
 #[repr(C)]
 #[derive(StableAbi, Debug, Clone)]
 pub enum AbiViewEventKind {
-    /// Search text changed (grid views).
+    /// Search text changed (grid views). Resets to the first page.
     Search(RString),
     /// A grid cell was activated, by its id.
     Activate(RString),
     /// A form was submitted with the collected field values.
     Submit(RVec<AbiFieldValue>),
+    /// The user scrolled near the end; fetch the next page for `term` starting
+    /// at `offset` (the number of items already loaded).
+    LoadMore { term: RString, offset: u64 },
 }
 
 /// How the plugin responds to a view event.
@@ -225,6 +230,9 @@ pub enum AbiViewResponse {
     None,
     /// Replace the current view's contents (e.g. new search results).
     Update(AbiView),
+    /// Append grid cells to the current view (pagination). An empty append
+    /// signals there are no more results.
+    Append(RVec<AbiGridItem>),
     /// Perform an effect (copy, push another view, close).
     Effect(AbiActionEffect),
 }

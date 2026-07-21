@@ -1,13 +1,13 @@
-//! Real GIF search plugin, backed by The Finer Gifs Club — a keyless public
-//! API (an archive of *The Office (US)* GIFs, searchable by dialogue).
+//! Real GIF search plugin with pagination.
 //!
-//! Type `gif` to open a searchable grid, then type to search. Selecting a GIF
-//! copies its link. No API key required.
+//! Provider is chosen at runtime:
+//! - `GIPHY_API_KEY` set  → **Giphy** (all GIFs). Free key: <https://developers.giphy.com>.
+//! - otherwise            → **The Finer Gifs Club** (keyless, but only *The
+//!   Office (US)* GIFs).
 //!
-//! Network calls happen in `handle_event`, which the host runs off the UI
-//! thread, so searching never blocks rendering.
-
-use std::io::Read;
+//! Type `gif` to open a searchable grid; type to search; scroll down to load
+//! more. Selecting a GIF copies its link. Network calls happen in
+//! `handle_event`, which the host runs off the UI thread.
 
 use plugin_api::{
     export_plugin,
@@ -19,9 +19,7 @@ use plugin_api::{
 const PLUGIN_ID: &str = "media.gif";
 const VIEW_ID: &str = "gif-grid";
 const COLUMNS: u32 = 4;
-const LIMIT: usize = 8;
-const SEARCH_URL: &str = "https://api.thefinergifs.club/search";
-const MEDIA_BASE: &str = "https://media.thefinergifs.club";
+const PAGE: usize = 12;
 
 #[derive(Default)]
 struct GifPlugin;
@@ -37,18 +35,17 @@ impl HostPlugin for GifPlugin {
             return RVec::new();
         }
 
-        // The default action opens an (initially empty) searchable grid; the
-        // host then asks us to fill it via a Search event.
+        let provider = Provider::detect();
         RVec::from(vec![AbiPluginResult {
             source_id: PLUGIN_ID.into(),
             section: "Media".into(),
             title: "Search GIFs".into(),
-            subtitle: RSome("The Office GIFs from thefinergifs.club".into()),
+            subtitle: RSome(RString::from(provider.subtitle())),
             icon_path: RNone,
             glyph: RSome(u32::from('G')),
             actions: RVec::from(vec![AbiPluginAction {
                 label: "Open".into(),
-                effect: AbiActionEffect::PushView(grid_view(RVec::new())),
+                effect: AbiActionEffect::PushView(grid_view(provider.title(), RVec::new())),
             }]),
         }])
     }
@@ -59,8 +56,15 @@ impl HostPlugin for GifPlugin {
         }
 
         match event.kind {
-            AbiViewEventKind::Search(term) => AbiViewResponse::Update(search(term.as_str().trim())),
-            // The grid cell id carries the GIF's link; copy it.
+            AbiViewEventKind::Search(term) => {
+                AbiViewResponse::Update(search_view(term.as_str().trim()))
+            }
+            AbiViewEventKind::LoadMore { term, offset } => {
+                let items = Provider::detect()
+                    .fetch(term.as_str().trim(), offset as usize)
+                    .unwrap_or_default();
+                AbiViewResponse::Append(items)
+            }
             AbiViewEventKind::Activate(id) => {
                 AbiViewResponse::Effect(AbiActionEffect::CopyToClipboard(id))
             }
@@ -69,24 +73,139 @@ impl HostPlugin for GifPlugin {
     }
 }
 
-fn search(term: &str) -> AbiView {
-    if term.is_empty() {
-        return message_view("Type to search The Office GIFs.");
-    }
+fn search_view(term: &str) -> AbiView {
+    let provider = Provider::detect();
 
-    match fetch(term) {
-        Ok(items) if !items.is_empty() => grid_view(items),
-        Ok(_) => message_view("No GIFs found. Try different words from a line of dialogue."),
-        Err(error) => message_view(&format!("Couldn't reach thefinergifs.club: {error}")),
+    match provider.fetch(term, 0) {
+        Ok(items) if !items.is_empty() => grid_view(provider.title(), items),
+        Ok(_) => message_view(provider.empty_hint(term)),
+        Err(error) => message_view(&format!("Couldn't reach the GIF provider: {error}")),
     }
 }
 
-fn fetch(term: &str) -> Result<RVec<AbiGridItem>, String> {
-    let json: serde_json::Value = ureq::get(SEARCH_URL)
+// --- Providers --------------------------------------------------------------
+
+enum Provider {
+    Giphy(String),
+    FinerGifs,
+}
+
+impl Provider {
+    fn detect() -> Self {
+        match std::env::var("GIPHY_API_KEY") {
+            Ok(key) if !key.trim().is_empty() => Provider::Giphy(key),
+            _ => Provider::FinerGifs,
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        match self {
+            Provider::Giphy(_) => "GIFs",
+            Provider::FinerGifs => "The Office GIFs",
+        }
+    }
+
+    fn subtitle(&self) -> &'static str {
+        match self {
+            Provider::Giphy(_) => "Search all GIFs (Giphy)",
+            Provider::FinerGifs => "The Office · set GIPHY_API_KEY for all GIFs",
+        }
+    }
+
+    fn empty_hint(&self, term: &str) -> &'static str {
+        if !term.is_empty() {
+            return "No GIFs found. Try different words.";
+        }
+        match self {
+            Provider::Giphy(_) => "Type to search GIFs.",
+            Provider::FinerGifs => {
+                "Type to search The Office GIFs. Set GIPHY_API_KEY for all GIFs."
+            }
+        }
+    }
+
+    fn fetch(&self, term: &str, offset: usize) -> Result<RVec<AbiGridItem>, String> {
+        match self {
+            Provider::Giphy(key) => giphy(key, term, offset),
+            Provider::FinerGifs => finer_gifs(term, offset),
+        }
+    }
+}
+
+fn giphy(key: &str, term: &str, offset: usize) -> Result<RVec<AbiGridItem>, String> {
+    let base = if term.is_empty() {
+        "https://api.giphy.com/v1/gifs/trending"
+    } else {
+        "https://api.giphy.com/v1/gifs/search"
+    };
+
+    let mut request = ureq::get(base)
+        .query("api_key", key)
+        .query("limit", &PAGE.to_string())
+        .query("offset", &offset.to_string());
+    if !term.is_empty() {
+        request = request.query("q", term);
+    }
+
+    let json: serde_json::Value = request
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+
+    let data = json["data"].as_array().cloned().unwrap_or_default();
+
+    Ok(data
+        .iter()
+        .filter_map(|gif| {
+            let images = &gif["images"];
+            let thumb = giphy_thumb(images)?;
+            let link = images["original"]["url"]
+                .as_str()
+                .or_else(|| gif["url"].as_str())
+                .unwrap_or(&thumb)
+                .to_string();
+            let title = gif["title"].as_str().unwrap_or("GIF").trim();
+
+            Some(AbiGridItem {
+                id: RString::from(link),
+                title: RString::from(if title.is_empty() { "GIF" } else { title }),
+                subtitle: RNone,
+                image: AbiImageSource::Url(RString::from(thumb)),
+            })
+        })
+        .collect())
+}
+
+/// Pick the smallest reasonable animated thumbnail Giphy offers.
+fn giphy_thumb(images: &serde_json::Value) -> Option<String> {
+    for key in [
+        "fixed_width_small",
+        "fixed_width_downsampled",
+        "fixed_width",
+        "downsized",
+        "original",
+    ] {
+        if let Some(url) = images[key]["url"].as_str() {
+            if !url.is_empty() {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn finer_gifs(term: &str, offset: usize) -> Result<RVec<AbiGridItem>, String> {
+    if term.is_empty() {
+        return Ok(RVec::new());
+    }
+
+    let json: serde_json::Value = ureq::get("https://api.thefinergifs.club/search")
         .query("q", term)
         .query("q.parser", "simple")
         .query("sort", "_score desc")
-        .query("size", &LIMIT.to_string())
+        .query("size", &PAGE.to_string())
+        .query("start", &offset.to_string())
         .call()
         .map_err(|e| e.to_string())?
         .into_json()
@@ -94,49 +213,30 @@ fn fetch(term: &str) -> Result<RVec<AbiGridItem>, String> {
 
     let results = json["results"].as_array().cloned().unwrap_or_default();
 
-    let items = results
+    Ok(results
         .iter()
-        .take(LIMIT)
         .filter_map(|entry| {
             let fields = &entry["fields"];
             let fileid = fields["fileid"].as_str()?;
             let title = fields["text"].as_str().unwrap_or("GIF").trim();
-            let url = format!("{MEDIA_BASE}/{fileid}.gif");
-
-            let image = match download(&url) {
-                Some(bytes) => AbiImageSource::Bytes(bytes.into()),
-                None => AbiImageSource::None,
-            };
+            let url = format!("https://media.thefinergifs.club/{fileid}.gif");
 
             Some(AbiGridItem {
-                id: RString::from(url),
+                id: RString::from(url.clone()),
                 title: RString::from(if title.is_empty() { "GIF" } else { title }),
                 subtitle: RNone,
-                image,
+                image: AbiImageSource::Url(RString::from(url)),
             })
         })
-        .collect();
-
-    Ok(items)
+        .collect())
 }
 
-/// Download raw image bytes for a thumbnail (best-effort, size-capped).
-fn download(url: &str) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    ureq::get(url)
-        .call()
-        .ok()?
-        .into_reader()
-        .take(8 * 1024 * 1024)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    Some(bytes)
-}
+// --- View helpers -----------------------------------------------------------
 
-fn grid_view(items: RVec<AbiGridItem>) -> AbiView {
+fn grid_view(title: &str, items: RVec<AbiGridItem>) -> AbiView {
     AbiView {
         view_id: VIEW_ID.into(),
-        title: "GIFs".into(),
+        title: RString::from(title),
         search_placeholder: RSome("Search GIFs…".into()),
         submit_label: RSome("Copy Link".into()),
         body: AbiViewBody::Grid {
@@ -146,15 +246,16 @@ fn grid_view(items: RVec<AbiGridItem>) -> AbiView {
     }
 }
 
-/// A grid view still (so it keeps its search bar) whose single message cell
-/// explains an empty/error state.
 fn message_view(message: &str) -> AbiView {
-    grid_view(RVec::from(vec![AbiGridItem {
-        id: String::new().into(),
-        title: RString::from(message),
-        subtitle: RNone,
-        image: AbiImageSource::None,
-    }]))
+    grid_view(
+        "GIFs",
+        RVec::from(vec![AbiGridItem {
+            id: String::new().into(),
+            title: RString::from(message),
+            subtitle: RNone,
+            image: AbiImageSource::None,
+        }]),
+    )
 }
 
 export_plugin!(GifPlugin);

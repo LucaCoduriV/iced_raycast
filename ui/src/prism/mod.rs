@@ -6,7 +6,7 @@ mod widgets;
 
 use std::sync::Arc;
 
-use self::state::{PrismEntry, PrismState, ViewState};
+use self::state::{ImageEntry, PrismEntry, PrismState, ViewState};
 use crate::design_system::{colors, spacing};
 use crate::prism::items::ListEntry;
 use core::{
@@ -55,6 +55,9 @@ impl Prism {
             actions_selected_index: 0,
             recent_arguments: Vec::new(),
             views: Vec::new(),
+            image_cache: std::collections::HashMap::new(),
+            anim_epoch: std::time::Instant::now(),
+            anim_now: std::time::Instant::now(),
         };
 
         let load_task = Task::perform(
@@ -158,7 +161,7 @@ impl Prism {
                     if len > 0 {
                         top.selected = (top.selected + columns).min(len - 1);
                     }
-                    return Task::none();
+                    return self.grid_nav_tasks();
                 }
                 if self.state.show_actions {
                     let len = self.actions_len();
@@ -183,7 +186,7 @@ impl Prism {
                 if let Some(top) = self.state.views.last_mut() {
                     // Up moves one grid row.
                     top.selected = top.selected.saturating_sub(top.grid_columns());
-                    return Task::none();
+                    return self.grid_nav_tasks();
                 }
                 if self.state.show_actions {
                     self.state.actions_selected_index =
@@ -329,7 +332,7 @@ impl Prism {
                 if let Some(top) = self.state.views.last_mut() {
                     top.selected = top.selected.saturating_sub(1);
                 }
-                Task::none()
+                self.grid_nav_tasks()
             }
 
             PrismEvent::GridRight => {
@@ -339,15 +342,31 @@ impl Prism {
                         top.selected = (top.selected + 1).min(len - 1);
                     }
                 }
-                Task::none()
+                self.grid_nav_tasks()
             }
 
             PrismEvent::ViewSearchInput(text) => {
-                if let Some(top) = self.state.views.last_mut() {
-                    top.search = text.clone();
-                    top.selected = 0;
+                let already_searching = match self.state.views.last_mut() {
+                    Some(top) => {
+                        top.search = text.clone();
+                        top.selected = 0;
+                        let busy = top.searching;
+                        if busy {
+                            // Coalesce: only keep the most recent term to run next.
+                            top.pending_search = Some(text.clone());
+                        } else {
+                            top.searching = true;
+                        }
+                        busy
+                    }
+                    None => return Task::none(),
+                };
+
+                if already_searching {
+                    Task::none()
+                } else {
+                    self.dispatch_search(text)
                 }
-                self.dispatch_view_event(ViewEventKind::Search(text))
             }
 
             PrismEvent::ViewItemActivated(id) => {
@@ -401,6 +420,37 @@ impl Prism {
                 }
             }
 
+            PrismEvent::ViewScrolled(viewport) => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.scroll_offset = viewport.absolute_offset().y;
+                    top.viewport_height = viewport.bounds().height;
+                }
+
+                // Load the next page when scrolled near the bottom.
+                let should_load = match self.state.views.last() {
+                    Some(top) => {
+                        viewport.relative_offset().y > 0.75
+                            && top.more_available
+                            && !top.loading_more
+                            && !top.searching
+                            && matches!(top.view.body, core::ViewBody::Grid { .. })
+                    }
+                    None => false,
+                };
+
+                if !should_load {
+                    return Task::none();
+                }
+
+                let (term, offset) = {
+                    let top = self.state.views.last_mut().unwrap();
+                    top.loading_more = true;
+                    (top.search.clone(), top.loaded_count as u64)
+                };
+
+                self.dispatch_view_event(ViewEventKind::LoadMore { term, offset })
+            }
+
             PrismEvent::PopView => {
                 self.state.views.pop();
                 match self.state.views.last() {
@@ -412,29 +462,303 @@ impl Prism {
                 }
             }
 
-            PrismEvent::ViewResponse(response) => match response {
-                ViewResponse::None => Task::none(),
-                ViewResponse::Update(view) => {
-                    if let Some(top) = self.state.views.last_mut() {
-                        top.view = view;
-                        let len = top.grid_len();
-                        top.selected = top.selected.min(len.saturating_sub(1));
+            PrismEvent::ViewResponse(response) => self.apply_view_response(response),
+
+            PrismEvent::SearchCompleted { term, response } => {
+                let apply = self.apply_view_response(response);
+
+                // Run the most recent queued term, if it differs from this one.
+                let next = self.state.views.last_mut().and_then(|top| {
+                    top.searching = false;
+                    top.pending_search.take().filter(|pending| *pending != term)
+                });
+
+                match next {
+                    Some(pending) => {
+                        if let Some(top) = self.state.views.last_mut() {
+                            top.searching = true;
+                        }
+                        Task::batch(vec![apply, self.dispatch_search(pending)])
                     }
-                    Task::none()
+                    None => apply,
                 }
-                ViewResponse::Effect(effect) => {
-                    let plugin_id = self
-                        .state
-                        .views
-                        .last()
-                        .map(|v| v.plugin_id.clone())
-                        .unwrap_or_default();
-                    self.apply_effect(effect, plugin_id)
+            }
+
+            PrismEvent::ImageLoaded { url, frames } => {
+                let entry = match frames {
+                    Some(frames) if !frames.is_empty() => ImageEntry::Loaded(frames),
+                    _ => ImageEntry::Failed,
+                };
+                self.state.image_cache.insert(url, entry);
+                Task::none()
+            }
+
+            PrismEvent::AnimationTick(now) => {
+                self.state.anim_now = now;
+                Task::none()
+            }
+
+            PrismEvent::GridRowMeasured { id, height } => {
+                if height > 0.0
+                    && let Some(top) = self.state.views.last_mut()
+                {
+                    top.row_heights.insert(id, height);
                 }
-            },
+                Task::none()
+            }
 
             _ => Task::none(),
         }
+    }
+
+    /// Apply a plugin's view response: replace the view (loading its images),
+    /// perform an effect, or nothing.
+    fn apply_view_response(&mut self, response: ViewResponse) -> Task<PrismEvent> {
+        match response {
+            ViewResponse::None => Task::none(),
+            ViewResponse::Update(view) => {
+                let mut reset_scroll = Task::none();
+                if let Some(top) = self.state.views.last_mut() {
+                    top.view = view;
+                    let len = top.grid_len();
+                    top.selected = top.selected.min(len.saturating_sub(1));
+                    // New result set: reset pagination and scroll to the top.
+                    top.loaded_count = len;
+                    top.loading_more = false;
+                    top.more_available = true;
+                    top.scroll_offset = 0.0;
+                    reset_scroll = scroll_to(
+                        top.scroll_id.clone(),
+                        scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+                    );
+                }
+                Task::batch(vec![
+                    reset_scroll,
+                    self.sync_grid_rows(true),
+                    self.ensure_grid_images(),
+                ])
+            }
+            ViewResponse::Append(items) => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.loading_more = false;
+                    if items.is_empty() {
+                        top.more_available = false;
+                    } else if let core::ViewBody::Grid {
+                        items: grid_items, ..
+                    } = &mut top.view.body
+                    {
+                        grid_items.extend(items);
+                        top.loaded_count = grid_items.len();
+                    }
+                }
+                Task::batch(vec![self.sync_grid_rows(false), self.ensure_grid_images()])
+            }
+            ViewResponse::Effect(effect) => {
+                let plugin_id = self
+                    .state
+                    .views
+                    .last()
+                    .map(|v| v.plugin_id.clone())
+                    .unwrap_or_default();
+                self.apply_effect(effect, plugin_id)
+            }
+        }
+    }
+
+    /// Scroll the active grid so the selected cell stays visible under keyboard
+    /// navigation, using measured row heights (same approach as the list).
+    fn scroll_grid_to_selected(&mut self) -> Task<PrismEvent> {
+        // Vertical gap between grid rows (matches `spacing::SPACE_M`) and the
+        // scrollable's top padding (`spacing::SPACE_S`).
+        const ROW_SPACING: f32 = 16.0;
+        const TOP_PAD: f32 = 8.0;
+        const FALLBACK_ROW: f32 = 124.0;
+
+        let Some(top) = self.state.views.last_mut() else {
+            return Task::none();
+        };
+        if !matches!(top.view.body, core::ViewBody::Grid { .. }) {
+            return Task::none();
+        }
+
+        let selected_row = top.selected / top.grid_columns();
+        // A measured row height to fall back to for rows not yet measured.
+        let default_row = top
+            .row_heights
+            .values()
+            .copied()
+            .next()
+            .unwrap_or(FALLBACK_ROW);
+        let height_of = |index: usize| {
+            top.row_ids
+                .get(index)
+                .and_then(|id| top.row_heights.get(id))
+                .copied()
+                .unwrap_or(default_row)
+        };
+
+        let mut row_top = TOP_PAD;
+        for row in 0..selected_row {
+            row_top += height_of(row) + ROW_SPACING;
+        }
+        let row_bottom = row_top + height_of(selected_row);
+
+        let viewport = if top.viewport_height > 0.0 {
+            top.viewport_height
+        } else {
+            340.0
+        };
+        let view_top = top.scroll_offset;
+        let view_bottom = view_top + viewport;
+
+        let target = if row_top < view_top {
+            Some(row_top)
+        } else if row_bottom > view_bottom {
+            Some(row_bottom - viewport)
+        } else {
+            None
+        };
+
+        match target {
+            Some(y) => {
+                top.scroll_offset = y;
+                scroll_to(
+                    top.scroll_id.clone(),
+                    scrollable::AbsoluteOffset { x: 0.0, y },
+                )
+            }
+            None => Task::none(),
+        }
+    }
+
+    /// Refresh the per-row ids for the active grid and measure their heights.
+    /// `reset` regenerates all ids (new search); otherwise ids are extended for
+    /// appended rows.
+    fn sync_grid_rows(&mut self, reset: bool) -> Task<PrismEvent> {
+        let Some(top) = self.state.views.last_mut() else {
+            return Task::none();
+        };
+        let core::ViewBody::Grid { items, columns } = &top.view.body else {
+            return Task::none();
+        };
+
+        let columns = (*columns as usize).max(1);
+        let rows = items.len().div_ceil(columns);
+
+        if reset {
+            top.row_ids.clear();
+            top.row_heights.clear();
+        }
+        while top.row_ids.len() < rows {
+            top.row_ids.push(Id::unique());
+        }
+        top.row_ids.truncate(rows);
+
+        measure_grid_rows(&top.row_ids)
+    }
+
+    /// Combined keyboard-nav response for a grid: keep the selection visible and
+    /// fetch the next page when navigating into the last loaded row.
+    fn grid_nav_tasks(&mut self) -> Task<PrismEvent> {
+        Task::batch(vec![
+            self.scroll_grid_to_selected(),
+            self.maybe_paginate_selection(),
+        ])
+    }
+
+    /// Trigger pagination if the selection has reached the last loaded row.
+    fn maybe_paginate_selection(&mut self) -> Task<PrismEvent> {
+        let request = {
+            let Some(top) = self.state.views.last() else {
+                return Task::none();
+            };
+            let near_end = top.selected + top.grid_columns() >= top.loaded_count;
+            let can_load = matches!(top.view.body, core::ViewBody::Grid { .. })
+                && near_end
+                && top.more_available
+                && !top.loading_more
+                && !top.searching
+                && top.loaded_count > 0;
+            can_load.then(|| (top.search.clone(), top.loaded_count as u64))
+        };
+
+        match request {
+            Some((term, offset)) => {
+                if let Some(top) = self.state.views.last_mut() {
+                    top.loading_more = true;
+                }
+                self.dispatch_view_event(ViewEventKind::LoadMore { term, offset })
+            }
+            None => Task::none(),
+        }
+    }
+
+    /// Kick off async fetches for any not-yet-cached grid image URLs in the
+    /// active view.
+    fn ensure_grid_images(&mut self) -> Task<PrismEvent> {
+        let Some(top) = self.state.views.last() else {
+            return Task::none();
+        };
+        let core::ViewBody::Grid { items, .. } = &top.view.body else {
+            return Task::none();
+        };
+
+        let urls: Vec<String> = items
+            .iter()
+            .filter_map(|item| match &item.image {
+                core::ImageSource::Url(url) if !self.state.image_cache.contains_key(url) => {
+                    Some(url.clone())
+                }
+                _ => None,
+            })
+            .collect();
+
+        let mut tasks = Vec::new();
+        for url in urls {
+            self.state
+                .image_cache
+                .insert(url.clone(), ImageEntry::Loading);
+
+            let fetch_url = url.clone();
+            tasks.push(Task::perform(
+                async move { core::net::fetch_bytes(&fetch_url).ok().map(build_frames) },
+                move |frames| PrismEvent::ImageLoaded {
+                    url: url.clone(),
+                    frames,
+                },
+            ));
+        }
+
+        Task::batch(tasks)
+    }
+
+    /// Dispatch a search to the active view's plugin, tagging the response with
+    /// the term so stale/queued searches can be reconciled.
+    fn dispatch_search(&self, term: String) -> Task<PrismEvent> {
+        let Some(top) = self.state.views.last() else {
+            return Task::none();
+        };
+
+        let registry = Arc::clone(&self.registry);
+        let plugin_id = top.plugin_id.clone();
+        let view_id = top.view.view_id.clone();
+        let search_term = term.clone();
+
+        Task::perform(
+            async move {
+                registry.handle_event(
+                    &plugin_id,
+                    ViewEvent {
+                        view_id,
+                        kind: ViewEventKind::Search(search_term),
+                    },
+                )
+            },
+            move |response| PrismEvent::SearchCompleted {
+                term: term.clone(),
+                response,
+            },
+        )
     }
 
     /// Perform a plugin action effect: copy, close, or push a view.
@@ -449,20 +773,24 @@ impl Prism {
             }
             ActionEffect::Close => Task::done(PrismEvent::ExitApp),
             ActionEffect::PushView(view) => {
-                let state = ViewState::new(plugin_id, view);
+                let mut state = ViewState::new(plugin_id, view);
                 let has_search = state.view.search_placeholder.is_some();
                 let is_grid = matches!(state.view.body, core::ViewBody::Grid { .. });
                 let search_id = state.search_id.clone();
+                if is_grid && has_search {
+                    state.searching = true;
+                }
                 self.state.views.push(state);
 
                 let mut tasks = Vec::new();
                 if has_search {
                     tasks.push(focus(search_id));
                 }
-                // Searchable grids load their initial contents by handling an
-                // empty search (e.g. trending gifs) as soon as they open.
+                // Load any images already present, then (for searchable grids)
+                // fetch the initial contents by handling an empty search.
+                tasks.push(self.ensure_grid_images());
                 if is_grid && has_search {
-                    tasks.push(self.dispatch_view_event(ViewEventKind::Search(String::new())));
+                    tasks.push(self.dispatch_search(String::new()));
                 }
                 Task::batch(tasks)
             }
@@ -498,7 +826,7 @@ impl Prism {
     }
 
     pub fn subscription(&self) -> Subscription<PrismEvent> {
-        event::listen_with(|event, _status, _window| {
+        let keys = event::listen_with(|event, _status, _window| {
             if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event
             {
                 keybindings::map_key_to_action(&key, modifiers).map(|action| match action {
@@ -513,7 +841,40 @@ impl Prism {
             } else {
                 None
             }
+        });
+
+        // Only drive animation frames while a grid with animated GIFs is shown.
+        if self.has_animated_grid() {
+            Subscription::batch([keys, iced::window::frames().map(PrismEvent::AnimationTick)])
+        } else {
+            keys
+        }
+    }
+
+    /// Whether the active view is a grid displaying at least one animated image.
+    fn has_animated_grid(&self) -> bool {
+        let Some(top) = self.state.views.last() else {
+            return false;
+        };
+        let core::ViewBody::Grid { items, .. } = &top.view.body else {
+            return false;
+        };
+        items.iter().any(|item| match &item.image {
+            core::ImageSource::Url(url) => self
+                .state
+                .image_cache
+                .get(url)
+                .is_some_and(ImageEntry::is_animated),
+            _ => false,
         })
+    }
+
+    /// Elapsed animation time in milliseconds.
+    fn anim_elapsed_ms(&self) -> u64 {
+        self.state
+            .anim_now
+            .saturating_duration_since(self.state.anim_epoch)
+            .as_millis() as u64
     }
 
     /// Number of actions available for the current selection.
@@ -526,12 +887,16 @@ impl Prism {
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
         // A plugin view takes over the whole window when one is on the stack.
         if let Some(top) = self.state.views.last() {
-            return container(views::view_screen(top))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(spacing::SPACE_S)
-                .style(window_style)
-                .into();
+            return container(views::view_screen(
+                top,
+                &self.state.image_cache,
+                self.anim_elapsed_ms(),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(spacing::SPACE_S)
+            .style(window_style)
+            .into();
         }
 
         let selected_entry = self.get_selected_entry();
@@ -652,7 +1017,10 @@ pub enum PrismEvent {
     EntriesLoaded(Vec<ListEntry>),
 
     Scrolled(scrollable::Viewport),
-    ItemMeasured { id: Id, rect: Rectangle },
+    ItemMeasured {
+        id: Id,
+        rect: Rectangle,
+    },
     Run,
     EscapePressed,
     ExitApp,
@@ -665,12 +1033,35 @@ pub enum PrismEvent {
     GridRight,
     ViewSearchInput(String),
     ViewItemActivated(String),
-    ViewFormText { field_id: String, value: String },
-    ViewFormToggle { field_id: String, value: bool },
-    ViewFormChoice { field_id: String, index: u64 },
+    ViewFormText {
+        field_id: String,
+        value: String,
+    },
+    ViewFormToggle {
+        field_id: String,
+        value: bool,
+    },
+    ViewFormChoice {
+        field_id: String,
+        index: u64,
+    },
     ViewSubmit,
+    ViewScrolled(scrollable::Viewport),
     PopView,
     ViewResponse(ViewResponse),
+    SearchCompleted {
+        term: String,
+        response: ViewResponse,
+    },
+    ImageLoaded {
+        url: String,
+        frames: Option<Vec<(iced::widget::image::Handle, u32)>>,
+    },
+    AnimationTick(std::time::Instant),
+    GridRowMeasured {
+        id: Id,
+        height: f32,
+    },
 }
 
 fn measure_all_visible_items(state: &PrismState) -> Task<PrismEvent> {
@@ -696,6 +1087,43 @@ fn measure_item(id: Id) -> Task<PrismEvent> {
         })
     });
     operate(operation)
+}
+
+/// Measure each grid row's height (by its container id) into `GridRowMeasured`
+/// events — the grid analogue of [`measure_item`].
+fn measure_grid_rows(row_ids: &[Id]) -> Task<PrismEvent> {
+    let tasks: Vec<Task<PrismEvent>> = row_ids
+        .iter()
+        .map(|id| {
+            let id = id.clone();
+            let selector = selector::id(id.clone()).find();
+            let operation = operation::map(selector, move |v| PrismEvent::GridRowMeasured {
+                id: id.clone(),
+                height: v.map(|widget| widget.bounds().height).unwrap_or(0.0),
+            });
+            operate(operation)
+        })
+        .collect();
+
+    Task::batch(tasks)
+}
+
+/// Decode fetched image bytes into displayable frames. Handles are built once
+/// here (off the UI thread) so re-renders reuse the GPU textures.
+fn build_frames(bytes: Vec<u8>) -> Vec<(iced::widget::image::Handle, u32)> {
+    use iced::widget::image::Handle;
+    match core::media::decode(bytes) {
+        core::media::Decoded::Still(bytes) => vec![(Handle::from_bytes(bytes), 0)],
+        core::media::Decoded::Animated(frames) => frames
+            .into_iter()
+            .map(|frame| {
+                (
+                    Handle::from_rgba(frame.width, frame.height, frame.rgba),
+                    frame.delay_ms,
+                )
+            })
+            .collect(),
+    }
 }
 
 /// The launcher window chrome: translucent surface, subtle border, rounded.

@@ -117,6 +117,8 @@ pub enum ImageSource {
     None,
     Path(String),
     Bytes(Vec<u8>),
+    /// A remote URL the host fetches (and caches) asynchronously.
+    Url(String),
 }
 
 /// A key/value row in a detail view's metadata sidebar.
@@ -153,12 +155,14 @@ pub struct ViewEvent {
 /// The kind of view interaction.
 #[derive(Debug, Clone)]
 pub enum ViewEventKind {
-    /// Search text changed (grid views).
+    /// Search text changed (grid views). Resets to the first page.
     Search(String),
     /// A grid cell was activated, by its id.
     Activate(String),
     /// A form was submitted with the collected field values.
     Submit(Vec<FieldValue>),
+    /// Fetch the next page for `term` starting at `offset` items.
+    LoadMore { term: String, offset: u64 },
 }
 
 /// A value collected from a form field on submit.
@@ -182,6 +186,8 @@ pub enum ViewResponse {
     None,
     /// Replace the current view's contents (e.g. new search results).
     Update(View),
+    /// Append grid cells to the current view (pagination). Empty means no more.
+    Append(Vec<GridItem>),
     /// Perform an effect (copy, push another view, close).
     Effect(ActionEffect),
 }

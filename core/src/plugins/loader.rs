@@ -215,7 +215,7 @@ mod tests {
 
         // Live network path: opt-in via ICED_RAYCAST_TEST_NETWORK.
         if std::env::var_os("ICED_RAYCAST_TEST_NETWORK").is_some() {
-            match gif.handle_event(ViewEvent {
+            let page1 = match gif.handle_event(ViewEvent {
                 view_id: "gif-grid".to_string(),
                 kind: ViewEventKind::Search("boss".to_string()),
             }) {
@@ -225,13 +225,28 @@ mod tests {
                 }) => {
                     assert!(!items.is_empty(), "live gif search returned no items");
                     assert!(
-                        items
-                            .iter()
-                            .any(|i| matches!(i.image, ImageSource::Bytes(ref b) if !b.is_empty())),
-                        "no gif thumbnails downloaded"
+                        items.iter().any(
+                            |i| matches!(&i.image, ImageSource::Url(u) if u.ends_with(".gif"))
+                        ),
+                        "gif items missing image URLs"
                     );
+                    items.len()
                 }
                 _ => panic!("expected a grid from live gif search"),
+            };
+
+            // Pagination: a LoadMore at the page-1 offset returns more items.
+            match gif.handle_event(ViewEvent {
+                view_id: "gif-grid".to_string(),
+                kind: ViewEventKind::LoadMore {
+                    term: "boss".to_string(),
+                    offset: page1 as u64,
+                },
+            }) {
+                ViewResponse::Append(items) => {
+                    assert!(!items.is_empty(), "load more returned no items");
+                }
+                _ => panic!("expected an Append from load more"),
             }
         }
     }
@@ -307,6 +322,7 @@ fn convert_grid_item(item: AbiGridItem) -> GridItem {
             AbiImageSource::None => ImageSource::None,
             AbiImageSource::Path(path) => ImageSource::Path(path.to_string()),
             AbiImageSource::Bytes(bytes) => ImageSource::Bytes(bytes.into()),
+            AbiImageSource::Url(url) => ImageSource::Url(url.to_string()),
         },
     }
 }
@@ -331,6 +347,9 @@ fn convert_response(response: AbiViewResponse) -> ViewResponse {
     match response {
         AbiViewResponse::None => ViewResponse::None,
         AbiViewResponse::Update(view) => ViewResponse::Update(convert_view(view)),
+        AbiViewResponse::Append(items) => {
+            ViewResponse::Append(items.into_iter().map(convert_grid_item).collect())
+        }
         AbiViewResponse::Effect(effect) => ViewResponse::Effect(convert_effect(effect)),
     }
 }
@@ -346,6 +365,10 @@ fn to_abi_event(event: ViewEvent) -> AbiViewEvent {
             ViewEventKind::Submit(values) => {
                 AbiViewEventKind::Submit(values.into_iter().map(to_abi_field_value).collect())
             }
+            ViewEventKind::LoadMore { term, offset } => AbiViewEventKind::LoadMore {
+                term: RString::from(term),
+                offset,
+            },
         },
     }
 }

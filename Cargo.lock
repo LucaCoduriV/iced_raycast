@@ -856,6 +856,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.19",
  "toml",
+ "ureq",
  "walkdir",
  "which",
 ]
