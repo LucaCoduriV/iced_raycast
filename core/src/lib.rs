@@ -14,6 +14,7 @@ pub use common::AppState;
 mod application;
 pub mod clipboard;
 mod common;
+pub mod open;
 mod plugins;
 pub mod search;
 

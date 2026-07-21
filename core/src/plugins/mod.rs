@@ -60,6 +60,8 @@ pub struct PluginAction {
 pub enum ActionEffect {
     /// Copy the given text to the system clipboard.
     CopyToClipboard(String),
+    /// Open a URL in the user's default browser.
+    OpenUrl(String),
     /// Push a full-screen plugin view onto the navigation stack.
     PushView(View),
     /// Close the launcher.

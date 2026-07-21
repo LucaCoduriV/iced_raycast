@@ -441,16 +441,30 @@ impl Prism {
     fn apply_effect(&mut self, effect: ActionEffect, plugin_id: String) -> Task<PrismEvent> {
         match effect {
             ActionEffect::CopyToClipboard(text) => copy_and_exit(&text),
+            ActionEffect::OpenUrl(url) => {
+                if let Err(e) = core::open::url(&url) {
+                    eprintln!("Failed to open URL: {e}");
+                }
+                Task::done(PrismEvent::ExitApp)
+            }
             ActionEffect::Close => Task::done(PrismEvent::ExitApp),
             ActionEffect::PushView(view) => {
                 let state = ViewState::new(plugin_id, view);
-                let focus_task = state
-                    .view
-                    .search_placeholder
-                    .is_some()
-                    .then(|| focus(state.search_id.clone()));
+                let has_search = state.view.search_placeholder.is_some();
+                let is_grid = matches!(state.view.body, core::ViewBody::Grid { .. });
+                let search_id = state.search_id.clone();
                 self.state.views.push(state);
-                focus_task.unwrap_or_else(Task::none)
+
+                let mut tasks = Vec::new();
+                if has_search {
+                    tasks.push(focus(search_id));
+                }
+                // Searchable grids load their initial contents by handling an
+                // empty search (e.g. trending gifs) as soon as they open.
+                if is_grid && has_search {
+                    tasks.push(self.dispatch_view_event(ViewEventKind::Search(String::new())));
+                }
+                Task::batch(tasks)
             }
         }
     }

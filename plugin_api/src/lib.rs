@@ -79,6 +79,8 @@ pub struct AbiPluginAction {
 pub enum AbiActionEffect {
     /// Copy the given text to the system clipboard.
     CopyToClipboard(RString),
+    /// Open a URL in the user's default browser.
+    OpenUrl(RString),
     /// Push a full-screen plugin view onto the navigation stack.
     PushView(AbiView),
     /// Close the launcher.

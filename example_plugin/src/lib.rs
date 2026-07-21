@@ -4,7 +4,7 @@
 //! the three interactive view layouts. Triggers (type in the launcher):
 //!
 //! - `up <text>`  — copy the uppercased text (list result, copy effect)
-//! - `gif <term>` — open a searchable **grid** view (the GIF example)
+//! - `grid`       — open a searchable **grid** view
 //! - `detail`     — open a **detail** view
 //! - `form`       — open a **form** view
 //!
@@ -40,13 +40,12 @@ impl HostPlugin for ShowcasePlugin {
             }
         }
 
-        if query == "gif" || query.starts_with("gif ") {
-            let term = query.strip_prefix("gif").unwrap_or("").trim();
+        if query == "grid" {
             results.push(open_result(
-                "GIF Grid",
-                "Browse GIFs in a grid",
+                "Grid Demo",
+                "Open a searchable grid view",
                 'G',
-                AbiActionEffect::PushView(gif_view(term)),
+                AbiActionEffect::PushView(grid_view("")),
             ));
         }
 
@@ -73,13 +72,12 @@ impl HostPlugin for ShowcasePlugin {
 
     fn handle_event(&self, event: AbiViewEvent) -> AbiViewResponse {
         match (event.view_id.as_str(), event.kind) {
-            // Grid: typing re-queries; activating a cell copies its link.
-            ("gif-grid", AbiViewEventKind::Search(term)) => {
-                AbiViewResponse::Update(gif_view(term.as_str()))
+            // Grid: typing re-queries; activating a cell copies its label.
+            ("grid-demo", AbiViewEventKind::Search(term)) => {
+                AbiViewResponse::Update(grid_view(term.as_str()))
             }
-            ("gif-grid", AbiViewEventKind::Activate(id)) => {
-                let link = format!("https://gifs.example/{id}");
-                AbiViewResponse::Effect(AbiActionEffect::CopyToClipboard(RString::from(link)))
+            ("grid-demo", AbiViewEventKind::Activate(id)) => {
+                AbiViewResponse::Effect(AbiActionEffect::CopyToClipboard(id))
             }
             // Form: submit copies the collected values.
             ("snippet-form", AbiViewEventKind::Submit(values)) => {
@@ -143,8 +141,8 @@ fn open_result(
     }
 }
 
-fn gif_view(term: &str) -> AbiView {
-    let label = if term.is_empty() { "trending" } else { term };
+fn grid_view(term: &str) -> AbiView {
+    let label = if term.is_empty() { "item" } else { term };
 
     let items: RVec<AbiGridItem> = (1..=8)
         .map(|i| AbiGridItem {
@@ -156,10 +154,10 @@ fn gif_view(term: &str) -> AbiView {
         .collect();
 
     AbiView {
-        view_id: "gif-grid".into(),
-        title: "GIFs".into(),
-        search_placeholder: RSome("Search GIFs…".into()),
-        submit_label: RSome("Copy Link".into()),
+        view_id: "grid-demo".into(),
+        title: "Grid Demo".into(),
+        search_placeholder: RSome("Filter items…".into()),
+        submit_label: RSome("Copy Label".into()),
         body: AbiViewBody::Grid { columns: 4, items },
     }
 }

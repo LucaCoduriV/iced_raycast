@@ -124,32 +124,115 @@ mod tests {
             "example plugin fired on an unrelated query"
         );
 
-        // "gif" produces a result whose default action pushes a grid view.
-        let gif = plugins
+        // The example plugin's "grid" result pushes a grid view...
+        let example = plugins
             .iter()
-            .flat_map(|p| p.query("gif trending"))
+            .find(|p| p.id() == "example.showcase")
+            .expect("example plugin not loaded");
+        let grid = example
+            .query("grid")
+            .into_iter()
             .next()
-            .expect("no gif result");
+            .expect("no grid result");
         assert!(
             matches!(
-                gif.actions.first().map(|a| &a.effect),
+                grid.actions.first().map(|a| &a.effect),
                 Some(ActionEffect::PushView(view)) if matches!(view.body, ViewBody::Grid { .. })
             ),
-            "gif result did not push a grid view"
+            "grid result did not push a grid view"
         );
 
-        // Searching within the grid view round-trips over the ABI and returns
-        // an updated grid.
-        let response = plugins[0].handle_event(ViewEvent {
-            view_id: "gif-grid".to_string(),
+        // ...and searching in it round-trips over the ABI to an updated grid.
+        match example.handle_event(ViewEvent {
+            view_id: "grid-demo".to_string(),
             kind: ViewEventKind::Search("cats".to_string()),
-        });
-        match response {
-            ViewResponse::Update(view) => match view.body {
-                ViewBody::Grid { items, .. } => assert_eq!(items.len(), 8),
-                _ => panic!("expected a grid update"),
-            },
-            _ => panic!("expected an Update response from the grid search"),
+        }) {
+            ViewResponse::Update(View {
+                body: ViewBody::Grid { items, .. },
+                ..
+            }) => {
+                assert_eq!(items.len(), 8)
+            }
+            _ => panic!("expected a grid Update from the grid search"),
+        }
+    }
+
+    /// The Google plugin opens a browser URL. Same opt-in env var.
+    #[test]
+    fn google_plugin_opens_url() {
+        let Ok(dir) = std::env::var("ICED_RAYCAST_TEST_PLUGIN_DIR") else {
+            return;
+        };
+        let plugins = load_plugins_from_dir(Path::new(&dir));
+        let Some(google) = plugins.iter().find(|p| p.id() == "web.google") else {
+            return;
+        };
+
+        let result = google
+            .query("g rust iced")
+            .into_iter()
+            .next()
+            .expect("no result");
+        match result.actions.first().map(|a| &a.effect) {
+            Some(ActionEffect::OpenUrl(url)) => {
+                assert!(
+                    url.contains("google.com/search?q=rust+iced"),
+                    "unexpected url: {url}"
+                );
+            }
+            other => panic!("expected an OpenUrl effect, got {other:?}"),
+        }
+    }
+
+    /// The GIF plugin loads and degrades gracefully without an API key.
+    #[test]
+    fn gif_plugin_pushes_grid() {
+        let Ok(dir) = std::env::var("ICED_RAYCAST_TEST_PLUGIN_DIR") else {
+            return;
+        };
+        let plugins = load_plugins_from_dir(Path::new(&dir));
+        let Some(gif) = plugins.iter().find(|p| p.id() == "media.gif") else {
+            return;
+        };
+
+        let result = gif.query("gif").into_iter().next().expect("no gif result");
+        assert!(matches!(
+            result.actions.first().map(|a| &a.effect),
+            Some(ActionEffect::PushView(view)) if matches!(view.body, ViewBody::Grid { .. })
+        ));
+
+        // An empty search returns a (message) grid rather than erroring.
+        assert!(matches!(
+            gif.handle_event(ViewEvent {
+                view_id: "gif-grid".to_string(),
+                kind: ViewEventKind::Search(String::new()),
+            }),
+            ViewResponse::Update(View {
+                body: ViewBody::Grid { .. },
+                ..
+            })
+        ));
+
+        // Live network path: opt-in via ICED_RAYCAST_TEST_NETWORK.
+        if std::env::var_os("ICED_RAYCAST_TEST_NETWORK").is_some() {
+            match gif.handle_event(ViewEvent {
+                view_id: "gif-grid".to_string(),
+                kind: ViewEventKind::Search("boss".to_string()),
+            }) {
+                ViewResponse::Update(View {
+                    body: ViewBody::Grid { items, .. },
+                    ..
+                }) => {
+                    assert!(!items.is_empty(), "live gif search returned no items");
+                    assert!(
+                        items
+                            .iter()
+                            .any(|i| matches!(i.image, ImageSource::Bytes(ref b) if !b.is_empty())),
+                        "no gif thumbnails downloaded"
+                    );
+                }
+                _ => panic!("expected a grid from live gif search"),
+            }
         }
     }
 }
@@ -181,6 +264,7 @@ fn convert_action(action: plugin_api::AbiPluginAction) -> PluginAction {
 fn convert_effect(effect: AbiActionEffect) -> ActionEffect {
     match effect {
         AbiActionEffect::CopyToClipboard(text) => ActionEffect::CopyToClipboard(text.to_string()),
+        AbiActionEffect::OpenUrl(url) => ActionEffect::OpenUrl(url.to_string()),
         AbiActionEffect::PushView(view) => ActionEffect::PushView(convert_view(view)),
         AbiActionEffect::Close => ActionEffect::Close,
     }
