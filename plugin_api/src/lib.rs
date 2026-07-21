@@ -32,12 +32,11 @@
 //! ```
 
 use abi_stable::{
-    StableAbi,
     library::RootModule,
-    package_version_strings,
-    sabi_trait,
+    package_version_strings, sabi_trait,
     sabi_types::VersionStrings,
     std_types::{RBox, ROption, RStr, RString, RVec},
+    StableAbi,
 };
 
 pub use abi_stable;
@@ -138,7 +137,10 @@ pub enum AbiFieldKind {
     /// On/off toggle with an initial state.
     Toggle(bool),
     /// One-of-many choice: options and the initially selected index.
-    Dropdown { options: RVec<RString>, selected: u64 },
+    Dropdown {
+        options: RVec<RString>,
+        selected: u64,
+    },
 }
 
 /// The body of a view — one of the supported layouts.
@@ -146,9 +148,15 @@ pub enum AbiFieldKind {
 #[derive(StableAbi, Debug, Clone)]
 pub enum AbiViewBody {
     /// A grid of image cells.
-    Grid { columns: u32, items: RVec<AbiGridItem> },
+    Grid {
+        columns: u32,
+        items: RVec<AbiGridItem>,
+    },
     /// A rich-text body with a metadata sidebar.
-    Detail { body: RString, metadata: RVec<AbiKeyValue> },
+    Detail {
+        body: RString,
+        metadata: RVec<AbiKeyValue>,
+    },
     /// A set of input fields.
     Form { fields: RVec<AbiFormField> },
 }
@@ -279,8 +287,8 @@ macro_rules! export_plugin {
         }
 
         #[$crate::abi_stable::sabi_extern_fn]
-        fn __new_plugin_instance()
-        -> $crate::HostPlugin_TO<'static, $crate::abi_stable::std_types::RBox<()>> {
+        fn __new_plugin_instance(
+        ) -> $crate::HostPlugin_TO<'static, $crate::abi_stable::std_types::RBox<()>> {
             $crate::plugin_object(<$plugin as ::core::default::Default>::default())
         }
     };

@@ -99,10 +99,12 @@ impl ViewState {
             ViewBody::Form { fields } => fields
                 .iter()
                 .filter_map(|field| {
-                    self.form_values.get(&field.id).map(|value| core::FieldValue {
-                        id: field.id.clone(),
-                        value: value.clone(),
-                    })
+                    self.form_values
+                        .get(&field.id)
+                        .map(|value| core::FieldValue {
+                            id: field.id.clone(),
+                            value: value.clone(),
+                        })
                 })
                 .collect(),
             _ => Vec::new(),

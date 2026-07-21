@@ -224,9 +224,12 @@ impl Prism {
                 }
 
                 // Read what we need before mutating self below.
-                let selection = self
-                    .get_selected_entry()
-                    .map(|entry| (entry.entry.entity.needs_argument(), entry.entry.name().to_string()));
+                let selection = self.get_selected_entry().map(|entry| {
+                    (
+                        entry.entry.entity.needs_argument(),
+                        entry.entry.name().to_string(),
+                    )
+                });
 
                 let Some((needs_argument, name)) = selection else {
                     return Task::none();
@@ -279,7 +282,12 @@ impl Prism {
                 // Resolve the action's data before mutating self, so we don't
                 // hold a borrow across the follow-up update/task.
                 let resolved = self.get_selected_entry().and_then(|entry| {
-                    let plugin_id = entry.entry.entity.plugin_source_id().unwrap_or_default().to_string();
+                    let plugin_id = entry
+                        .entry
+                        .entity
+                        .plugin_source_id()
+                        .unwrap_or_default()
+                        .to_string();
                     widgets::actions_for(&entry.entry)
                         .into_iter()
                         .nth(index)
@@ -348,7 +356,8 @@ impl Prism {
 
             PrismEvent::ViewFormText { field_id, value } => {
                 if let Some(top) = self.state.views.last_mut() {
-                    top.form_values.insert(field_id, FieldValueKind::Text(value));
+                    top.form_values
+                        .insert(field_id, FieldValueKind::Text(value));
                 }
                 Task::none()
             }
@@ -583,10 +592,10 @@ impl Prism {
         };
 
         let main = container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(spacing::SPACE_S)
-        .style(window_style);
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(spacing::SPACE_S)
+            .style(window_style);
 
         // Overlay the actions popover, anchored bottom-right above the footer.
         if self.state.show_actions

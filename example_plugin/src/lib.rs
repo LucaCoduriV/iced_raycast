@@ -12,10 +12,11 @@
 //! `libexample_plugin.so` (`.dll` / `.dylib`) into the launcher's plugins dir.
 
 use plugin_api::{
+    export_plugin,
+    std_types::{RNone, RSome, RStr, RString, RVec},
     AbiActionEffect, AbiFieldKind, AbiFieldValueKind, AbiFormField, AbiGridItem, AbiImageSource,
     AbiKeyValue, AbiPluginAction, AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent,
-    AbiViewEventKind, AbiViewResponse, HostPlugin, export_plugin,
-    std_types::{RNone, RSome, RStr, RString, RVec},
+    AbiViewEventKind, AbiViewResponse, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "example.showcase";
@@ -122,7 +123,12 @@ fn uppercase_result(text: &str) -> AbiPluginResult {
 }
 
 /// A list result whose default action pushes a view.
-fn open_result(title: &str, subtitle: &str, glyph: char, effect: AbiActionEffect) -> AbiPluginResult {
+fn open_result(
+    title: &str,
+    subtitle: &str,
+    glyph: char,
+    effect: AbiActionEffect,
+) -> AbiPluginResult {
     AbiPluginResult {
         source_id: PLUGIN_ID.into(),
         section: "Showcase".into(),
@@ -171,9 +177,18 @@ fn detail_view() -> AbiView {
                  metadata sidebar on the right.",
             ),
             metadata: RVec::from(vec![
-                AbiKeyValue { key: "Type".into(), value: "Demo".into() },
-                AbiKeyValue { key: "Author".into(), value: "example".into() },
-                AbiKeyValue { key: "Version".into(), value: "0.1.0".into() },
+                AbiKeyValue {
+                    key: "Type".into(),
+                    value: "Demo".into(),
+                },
+                AbiKeyValue {
+                    key: "Author".into(),
+                    value: "example".into(),
+                },
+                AbiKeyValue {
+                    key: "Version".into(),
+                    value: "0.1.0".into(),
+                },
             ]),
         },
     }

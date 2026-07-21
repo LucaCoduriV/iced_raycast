@@ -87,9 +87,17 @@ pub struct View {
 /// The body of a [`View`] — one of the supported layouts.
 #[derive(Debug, Clone)]
 pub enum ViewBody {
-    Grid { columns: u32, items: Vec<GridItem> },
-    Detail { body: String, metadata: Vec<KeyValue> },
-    Form { fields: Vec<FormField> },
+    Grid {
+        columns: u32,
+        items: Vec<GridItem>,
+    },
+    Detail {
+        body: String,
+        metadata: Vec<KeyValue>,
+    },
+    Form {
+        fields: Vec<FormField>,
+    },
 }
 
 /// A cell in a grid view.

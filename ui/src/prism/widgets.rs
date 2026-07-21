@@ -168,13 +168,9 @@ pub fn argument_view<'a, Message: 'a + Clone>(
         });
 
     let header = container(
-        row![
-            pill,
-            text("›").size(20.0).color(colors::SECONDARY),
-            input
-        ]
-        .spacing(spacing::SPACE_S + spacing::SPACE_XS)
-        .align_y(Alignment::Center),
+        row![pill, text("›").size(20.0).color(colors::SECONDARY), input]
+            .spacing(spacing::SPACE_S + spacing::SPACE_XS)
+            .align_y(Alignment::Center),
     )
     .padding(12.0);
 
@@ -446,7 +442,11 @@ pub fn actions_for(entry: &ListEntry) -> Vec<MenuAction> {
 
     vec![
         MenuAction {
-            label: if is_app { "Open".into() } else { "Run Command".into() },
+            label: if is_app {
+                "Open".into()
+            } else {
+                "Run Command".into()
+            },
             hint: "↵",
             glyph: "↵",
             color: colors::PRIMARY,
@@ -468,34 +468,40 @@ pub fn actions_menu<'a, Message: 'a + Clone>(
     selected: usize,
     on_select: impl Fn(usize) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let mut items = column![container(
-        text("Actions")
-            .font(typo::LABEL_S.2)
-            .size(11.0)
-            .color(colors::SECONDARY)
-    )
-    .padding(iced::Padding {
-        top: 4.0,
-        right: 6.0,
-        bottom: 8.0,
-        left: 6.0,
-    })]
+    let mut items = column![
+        container(
+            text("Actions")
+                .font(typo::LABEL_S.2)
+                .size(11.0)
+                .color(colors::SECONDARY)
+        )
+        .padding(iced::Padding {
+            top: 4.0,
+            right: 6.0,
+            bottom: 8.0,
+            left: 6.0,
+        })
+    ]
     .width(Length::Fill);
 
     for (i, action) in actions.into_iter().enumerate() {
         let is_selected = i == selected;
         let color = action.color;
 
-        let glyph = container(text(action.glyph.to_string()).size(12.0).color(Color::WHITE))
-            .center(Length::Fixed(22.0))
-            .style(move |_| container::Style {
-                background: Some(color.into()),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
+        let glyph = container(
+            text(action.glyph.to_string())
+                .size(12.0)
+                .color(Color::WHITE),
+        )
+        .center(Length::Fixed(22.0))
+        .style(move |_| container::Style {
+            background: Some(color.into()),
+            border: iced::Border {
+                radius: 6.0.into(),
                 ..Default::default()
-            });
+            },
+            ..Default::default()
+        });
 
         let content = row![
             glyph,

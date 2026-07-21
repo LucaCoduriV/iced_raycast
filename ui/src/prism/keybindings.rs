@@ -36,10 +36,7 @@ pub enum KeyAction {
     ToggleActions,
 }
 
-pub fn map_key_to_action(
-    key: &keyboard::Key,
-    modifiers: keyboard::Modifiers,
-) -> Option<KeyAction> {
+pub fn map_key_to_action(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<KeyAction> {
     // ⌘K / Ctrl+K toggles the actions menu. Other modified chords are ignored
     // so they don't get misread as list navigation.
     if modifiers.command() {

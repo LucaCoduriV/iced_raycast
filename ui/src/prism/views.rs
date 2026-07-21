@@ -232,7 +232,9 @@ fn detail_body<'a>(body: &'a str, metadata: &'a [core::KeyValue]) -> Element<'a,
         );
     }
 
-    let mut sidebar = column![].spacing(spacing::SPACE_M).width(Length::Fixed(200.0));
+    let mut sidebar = column![]
+        .spacing(spacing::SPACE_M)
+        .width(Length::Fixed(200.0));
     for entry in metadata {
         sidebar = sidebar.push(
             column![
@@ -247,9 +249,7 @@ fn detail_body<'a>(body: &'a str, metadata: &'a [core::KeyValue]) -> Element<'a,
         );
     }
 
-    row![text_column, sidebar]
-        .spacing(spacing::SPACE_L)
-        .into()
+    row![text_column, sidebar].spacing(spacing::SPACE_L).into()
 }
 
 // --- Form -------------------------------------------------------------------

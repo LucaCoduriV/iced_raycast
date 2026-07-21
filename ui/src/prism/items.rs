@@ -78,7 +78,10 @@ pub enum IconHandle {
     Svg(svg::Handle),
     Other(image::Handle),
     /// A generated fallback tile: an uppercase initial on a colored square.
-    Letter { letter: char, color: iced::Color },
+    Letter {
+        letter: char,
+        color: iced::Color,
+    },
 }
 
 impl IconHandle {

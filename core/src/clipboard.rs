@@ -70,7 +70,10 @@ mod tests {
 
         let output = Command::new("wl-paste").output().expect("wl-paste failed");
         let pasted = String::from_utf8_lossy(&output.stdout);
-        assert!(pasted.contains(marker), "clipboard missing marker, got {pasted:?}");
+        assert!(
+            pasted.contains(marker),
+            "clipboard missing marker, got {pasted:?}"
+        );
     }
 }
 

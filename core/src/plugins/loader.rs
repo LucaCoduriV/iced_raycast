@@ -119,7 +119,10 @@ mod tests {
 
         // It should stay quiet for unrelated queries.
         let quiet: Vec<_> = plugins.iter().flat_map(|p| p.query("firefox")).collect();
-        assert!(quiet.is_empty(), "example plugin fired on an unrelated query");
+        assert!(
+            quiet.is_empty(),
+            "example plugin fired on an unrelated query"
+        );
 
         // "gif" produces a result whose default action pushes a grid view.
         let gif = plugins
