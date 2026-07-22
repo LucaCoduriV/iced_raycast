@@ -672,8 +672,12 @@ pub fn menu_button<'a, Message: Clone + 'a>(on_press: Message) -> Element<'a, Me
             })
     };
 
-    let glyph = container(column![bar(), bar(), bar()].spacing(3.0).align_x(Alignment::Center))
-        .center(Length::Fill);
+    let glyph = container(
+        column![bar(), bar(), bar()]
+            .spacing(3.0)
+            .align_x(Alignment::Center),
+    )
+    .center(Length::Fill);
 
     button(glyph)
         .on_press(on_press)

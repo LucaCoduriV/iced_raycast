@@ -135,9 +135,7 @@ fn install(hotkey: &core::Hotkey) -> anyhow::Result<()> {
     // `HOTKEY` slot (not leaked) so `rebind` can unregister it later. The
     // thread-local lives for the process, so the key stays registered.
     let manager = GlobalHotKeyManager::new()?;
-    let key = to_hotkey(hotkey).unwrap_or_else(|_| {
-        HotKey::new(Some(Modifiers::ALT), Code::Space)
-    });
+    let key = to_hotkey(hotkey).unwrap_or_else(|_| HotKey::new(Some(Modifiers::ALT), Code::Space));
     manager.register(key)?;
     HOTKEY.with(|cell| *cell.borrow_mut() = Some((manager, key)));
 
