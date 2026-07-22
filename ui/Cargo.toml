@@ -23,6 +23,14 @@ ksni = { version = "0.3", default-features = false, features = ["blocking", "asy
 # For PR_SET_PDEATHSIG so the clipboard watcher child dies with the agent.
 libc = "0.2"
 
+# Native tray + global hotkey for the resident agent (Windows/macOS). tray-icon
+# wraps Shell_NotifyIcon / NSStatusItem; global-hotkey wraps RegisterHotKey /
+# Carbon. `image` decodes the bundled PNG into an RGBA tray icon.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = "0.24"
+global-hotkey = "0.8"
+image = "0.25"
+
 # Build the bundled plugin cdylibs alongside the app and copy them into the
 # user's plugins directory (see build.rs). Debug builds only.
 [build-dependencies]

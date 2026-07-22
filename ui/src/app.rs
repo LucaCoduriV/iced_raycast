@@ -20,10 +20,17 @@ const LAUNCHER_SIZE: (u32, u32) = (700, 500);
 pub struct Raycast {
     prism: prism::Prism,
     app_state: AppState,
-    /// The launcher window/surface while it is shown. The app is a resident
-    /// process: the window is created on "show" and destroyed on close, but the
-    /// process (and warm registry) live on.
+    /// The launcher window/surface. The app is a resident process; the meaning
+    /// differs per platform:
+    /// * Linux — the layer surface *while shown*; created on "show" and destroyed
+    ///   on close (cheap on a compositor).
+    /// * Windows/macOS — the window *once created*; it then persists and is only
+    ///   hidden/shown (recreating a wgpu window per open is slow), so `Some` here
+    ///   does not imply visible — see [`Raycast::launcher_visible`].
     launcher: Option<iced::window::Id>,
+    /// Non-Linux only: whether the persistent launcher window is currently shown.
+    #[cfg(not(target_os = "linux"))]
+    launcher_visible: bool,
     /// The Plugin Manager window while it is open (a separate xdg_toplevel on
     /// Linux; elsewhere the manager renders inline in the launcher window).
     #[cfg(target_os = "linux")]
@@ -45,6 +52,8 @@ impl Raycast {
             prism,
             app_state,
             launcher: None,
+            #[cfg(not(target_os = "linux"))]
+            launcher_visible: false,
             #[cfg(target_os = "linux")]
             settings_window: None,
             // Start the continuous clipboard recorder, owned by this agent.
@@ -67,6 +76,12 @@ impl Raycast {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // On Windows/macOS the native tray + global hotkey must be created on the
+        // main thread with the event loop already running; `update` is exactly
+        // that context. `ensure_installed` is a one-time (Once-guarded) setup.
+        #[cfg(not(target_os = "linux"))]
+        crate::tray_native::ensure_installed();
+
         match message {
             Message::PrismEvent(prism_event) => self.handle_prism_event(prism_event),
             Message::Run => {
@@ -106,13 +121,12 @@ impl Raycast {
     /// Show the launcher: create its window if it isn't already visible, reset
     /// the (warm) launcher state, and focus the search box.
     fn show_launcher(&mut self) -> Task<Message> {
-        if self.launcher.is_some() {
-            return Task::none(); // already visible
-        }
-        self.prism.reset();
-
         #[cfg(target_os = "linux")]
         {
+            if self.launcher.is_some() {
+                return Task::none(); // already visible
+            }
+            self.prism.reset();
             let (id, open) = Message::layershell_open(launcher_layer_settings());
             self.launcher = Some(id);
             let focus = self.prism.focus_search().map(Message::PrismEvent);
@@ -120,30 +134,54 @@ impl Raycast {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let (id, open) = iced::window::open(launcher_window_settings());
-            self.launcher = Some(id);
-            // Once the window exists, focus it and its search input (Initialized
-            // focuses the search).
-            Task::batch([
-                open.map(|_| Message::PrismEvent(PrismEvent::Initialized)),
-                iced::window::gain_focus(id),
-            ])
+            if self.launcher_visible {
+                return Task::none(); // already visible
+            }
+            self.prism.reset();
+            self.launcher_visible = true;
+            match self.launcher {
+                // Warm path: the window already exists (hidden). Just un-hide and
+                // refocus — no wgpu window/surface rebuild, so this is instant.
+                Some(id) => Task::batch([
+                    iced::window::set_mode(id, iced::window::Mode::Windowed),
+                    iced::window::gain_focus(id),
+                    self.prism.focus_search().map(Message::PrismEvent),
+                ]),
+                // Cold path: first show — create the window once; it persists
+                // hereafter. `Initialized` focuses the search input.
+                None => {
+                    let (id, open) = iced::window::open(launcher_window_settings());
+                    self.launcher = Some(id);
+                    Task::batch([
+                        open.map(|_| Message::PrismEvent(PrismEvent::Initialized)),
+                        iced::window::gain_focus(id),
+                    ])
+                }
+            }
         }
     }
 
     /// Close the launcher after acting on it. This hides the window but keeps the
     /// resident process alive.
     fn close_launcher(&mut self) -> Task<Message> {
-        let Some(id) = self.launcher.take() else {
-            return Task::none();
-        };
         #[cfg(target_os = "linux")]
         {
+            let Some(id) = self.launcher.take() else {
+                return Task::none();
+            };
             Task::done(Message::RemoveWindow(id))
         }
         #[cfg(not(target_os = "linux"))]
         {
-            iced::window::close(id)
+            if !self.launcher_visible {
+                return Task::none();
+            }
+            self.launcher_visible = false;
+            // Hide, don't destroy — so the next show is a warm, instant un-hide.
+            match self.launcher {
+                Some(id) => iced::window::set_mode(id, iced::window::Mode::Hidden),
+                None => Task::none(),
+            }
         }
     }
 
@@ -244,10 +282,13 @@ impl Raycast {
             iced::window::close_events().map(Message::WindowClosed),
         ];
 
-        // The system-tray icon (Linux; ksni). Native trays for Windows/macOS are
-        // still TODO.
+        // The system-tray icon + global hotkey. Linux uses ksni (tray) plus the
+        // compositor keybind; Windows/macOS use the native tray-icon +
+        // global-hotkey wiring in `tray_native`.
         #[cfg(target_os = "linux")]
         subscriptions.push(crate::tray::subscription());
+        #[cfg(not(target_os = "linux"))]
+        subscriptions.push(crate::tray_native::subscription());
 
         Subscription::batch(subscriptions)
     }

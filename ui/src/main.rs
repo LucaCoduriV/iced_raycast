@@ -6,6 +6,8 @@ mod ipc;
 mod prism;
 #[cfg(target_os = "linux")]
 mod tray;
+#[cfg(not(target_os = "linux"))]
+mod tray_native;
 
 /// When invoked as `iced_raycast --clip-record` (by the clipboard plugin's
 /// `wl-paste --watch` watcher), read the new clipboard text from stdin, record
@@ -40,8 +42,10 @@ pub fn main() -> iced::Result {
 
     // Cold path: become the resident agent. `iced::daemon` stays alive with no
     // window; the launcher window is created on demand — and, on this first
-    // launch, immediately (see Raycast::new). Bind an OS hotkey to run the
-    // binary to open it warm thereafter.
+    // launch, immediately (see Raycast::new). Thereafter the native global hotkey
+    // (Alt/Option+Space, registered in `tray_native`) or the tray icon opens it
+    // warm; an OS-level keybind that re-runs the binary (which IPC-shows) also
+    // works.
     iced::daemon(Raycast::new, Raycast::update, Raycast::view)
         .title(window_title)
         .style(Raycast::style)
