@@ -166,14 +166,15 @@ fn event_stream() -> impl iced::futures::Stream<Item = Message> {
         // each thread *blocks* on `recv()`: the event is forwarded the instant it
         // arrives, with none of the latency a poll-and-sleep loop would add.
 
-        // Global-hotkey presses show the launcher (ignore the release half).
+        // Global-hotkey presses toggle the launcher (ignore the release half):
+        // press once to open, again to dismiss.
         let mut hotkey_sender = output.clone();
         std::thread::spawn(move || {
             use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
             let hotkeys = GlobalHotKeyEvent::receiver();
             while let Ok(event) = hotkeys.recv() {
                 if event.state == HotKeyState::Pressed {
-                    let _ = hotkey_sender.try_send(Message::Show);
+                    let _ = hotkey_sender.try_send(Message::Toggle);
                 }
             }
         });

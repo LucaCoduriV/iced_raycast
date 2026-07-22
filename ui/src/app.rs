@@ -88,6 +88,7 @@ impl Raycast {
             }
             Message::ExitApp => self.close_launcher(),
             Message::Show => self.show_launcher(),
+            Message::Toggle => self.toggle_launcher(),
             Message::QuitAgent => self.quit_agent(),
             Message::WindowClosed(id) => self.on_window_closed(id),
             Message::IcedEvent(event) => self.handle_iced_event(event),
@@ -211,6 +212,21 @@ impl Raycast {
                     ])
                 }
             }
+        }
+    }
+
+    /// Toggle the launcher: close it if it's showing, otherwise show it. Bound to
+    /// the global shortcut so pressing it again dismisses the launcher.
+    fn toggle_launcher(&mut self) -> Task<Message> {
+        #[cfg(target_os = "linux")]
+        let visible = self.launcher.is_some();
+        #[cfg(not(target_os = "linux"))]
+        let visible = self.launcher_visible;
+
+        if visible {
+            self.close_launcher()
+        } else {
+            self.show_launcher()
         }
     }
 
@@ -509,8 +525,10 @@ fn settings_window_settings() -> iced::window::Settings {
     }
 }
 
-/// A subscription that listens on the IPC control socket and emits [`Message::Show`]
-/// whenever a bare invocation asks the resident agent to open the launcher.
+/// A subscription that listens on the IPC control socket and emits
+/// [`Message::Toggle`] whenever a bare invocation asks the resident agent to open
+/// the launcher. This is the launcher shortcut on Linux (the compositor keybind
+/// re-runs the binary), so it toggles: a second press dismisses the launcher.
 fn show_stream() -> impl iced::futures::Stream<Item = Message> {
     use iced::futures::channel::mpsc::Sender;
     iced::stream::channel(4, |output: Sender<Message>| async move {
@@ -520,7 +538,7 @@ fn show_stream() -> impl iced::futures::Stream<Item = Message> {
         std::thread::spawn(move || {
             if let Some(listener) = crate::ipc::bind() {
                 crate::ipc::serve(listener, || {
-                    let _ = sender.try_send(Message::Show);
+                    let _ = sender.try_send(Message::Toggle);
                 });
             }
         });
@@ -539,6 +557,9 @@ pub enum Message {
     ExitApp,
     /// Show the launcher window/surface (IPC trigger / first launch).
     Show,
+    /// Toggle the launcher (from the global shortcut): show it, or close it if
+    /// it is already open.
+    Toggle,
     /// Quit the resident agent entirely (e.g. from the tray).
     QuitAgent,
     /// A window (launcher or Plugin Manager) was closed.
