@@ -25,14 +25,26 @@
 //! [`subscription`] drains from a helper thread and forwards into the iced event
 //! loop as [`Message`]s — the same shape as the Linux `tray` module.
 
+use std::cell::RefCell;
+use std::str::FromStr;
 use std::sync::{Once, OnceLock};
 
+use global_hotkey::GlobalHotKeyManager;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use iced::Subscription;
 use iced::futures::channel::mpsc::Sender;
 
 use tray_icon::menu::MenuId;
 
 use crate::app::Message;
+
+thread_local! {
+    /// The global-hotkey manager and the currently-registered hotkey, kept on
+    /// the main thread (where they were created — the crates require it) for the
+    /// process lifetime. Held here rather than leaked so [`rebind`] can
+    /// unregister the old key before registering a new one.
+    static HOTKEY: RefCell<Option<(GlobalHotKeyManager, HotKey)>> = const { RefCell::new(None) };
+}
 
 /// Menu-item ids, captured at install time so the event thread can tell which
 /// item fired (muda identifies menu events only by id).
@@ -44,17 +56,55 @@ static QUIT_ID: OnceLock<MenuId> = OnceLock::new();
 ///
 /// MUST be called on the main thread with the event loop running — call it from
 /// `Raycast::update` (see the module docs for why). Safe to call on every update;
-/// the [`Once`] collapses all but the first to a cheap atomic load.
-pub fn ensure_installed() {
+/// the [`Once`] collapses all but the first to a cheap atomic load. `hotkey` is
+/// the launcher shortcut to register on that first call (subsequent calls, and
+/// later rebinds, go through [`rebind`]).
+pub fn ensure_installed(hotkey: &core::Hotkey) {
     static INSTALL: Once = Once::new();
     INSTALL.call_once(|| {
-        if let Err(error) = install() {
+        if let Err(error) = install(hotkey) {
             eprintln!("tray/hotkey: failed to initialise: {error}");
         }
     });
 }
 
-fn install() -> anyhow::Result<()> {
+/// Translate a persisted [`core::Hotkey`] into the global-hotkey registration
+/// type. Fails only if the stored key `code` is not a recognised W3C code name.
+fn to_hotkey(hotkey: &core::Hotkey) -> anyhow::Result<HotKey> {
+    let mut mods = Modifiers::empty();
+    mods.set(Modifiers::CONTROL, hotkey.ctrl);
+    mods.set(Modifiers::ALT, hotkey.alt);
+    mods.set(Modifiers::SHIFT, hotkey.shift);
+    mods.set(Modifiers::META, hotkey.meta);
+
+    let code = Code::from_str(&hotkey.code)
+        .map_err(|_| anyhow::anyhow!("unknown key code {:?}", hotkey.code))?;
+
+    let mods = (!mods.is_empty()).then_some(mods);
+    Ok(HotKey::new(mods, code))
+}
+
+/// Re-register the launcher hotkey: unregister the current one and register
+/// `hotkey` in its place. Called from `Raycast::update` (main thread) after the
+/// user records a new shortcut. A no-op if the manager isn't installed yet.
+pub fn rebind(hotkey: &core::Hotkey) -> anyhow::Result<()> {
+    let new = to_hotkey(hotkey)?;
+    HOTKEY.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let Some((manager, current)) = slot.as_mut() else {
+            return Ok(());
+        };
+        if new == *current {
+            return Ok(());
+        }
+        let _ = manager.unregister(*current);
+        manager.register(new)?;
+        *current = new;
+        Ok(())
+    })
+}
+
+fn install(hotkey: &core::Hotkey) -> anyhow::Result<()> {
     use tray_icon::TrayIconBuilder;
     use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 
@@ -81,13 +131,15 @@ fn install() -> anyhow::Result<()> {
         .build()?;
     std::mem::forget(tray);
 
-    // Register the global hotkey. Leak the manager for the same reason (its
-    // `Drop` unregisters the key).
-    use global_hotkey::GlobalHotKeyManager;
-    use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+    // Register the global hotkey and keep the manager alive in the main thread's
+    // `HOTKEY` slot (not leaked) so `rebind` can unregister it later. The
+    // thread-local lives for the process, so the key stays registered.
     let manager = GlobalHotKeyManager::new()?;
-    manager.register(HotKey::new(Some(Modifiers::ALT), Code::Space))?;
-    std::mem::forget(manager);
+    let key = to_hotkey(hotkey).unwrap_or_else(|_| {
+        HotKey::new(Some(Modifiers::ALT), Code::Space)
+    });
+    manager.register(key)?;
+    HOTKEY.with(|cell| *cell.borrow_mut() = Some((manager, key)));
 
     Ok(())
 }

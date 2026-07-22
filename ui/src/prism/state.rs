@@ -100,6 +100,8 @@ pub struct PrismState {
     pub command_held: bool,
     pub show_actions: bool,
     pub actions_selected_index: usize,
+    /// Whether the app menu (hamburger, bottom-left) popover is open.
+    pub show_menu: bool,
     /// Recent arguments for the command currently in argument mode.
     pub recent_arguments: Vec<String>,
     /// Navigation stack of plugin views. Empty means the normal list; the last

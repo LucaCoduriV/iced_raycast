@@ -655,16 +655,171 @@ fn footer_shell<'a, Message: 'a>(bar: Row<'a, Message>) -> Element<'a, Message> 
     .into()
 }
 
-/// The bottom action bar. Shows the selected item's tile and its primary
-/// action, plus the Actions (⌘K) affordance; falls back to a no-selection
-/// state when nothing is selected.
-pub fn footer<'a, Message: 'a>(selected: Option<&'a ListEntry>) -> Element<'a, Message> {
+/// The hamburger button at the far left of the launcher footer. Pressing it
+/// opens the app menu (Settings / Quit); the popover is anchored above it.
+pub fn menu_button<'a, Message: Clone + 'a>(on_press: Message) -> Element<'a, Message> {
+    let bar = || {
+        container("")
+            .width(Length::Fixed(13.0))
+            .height(Length::Fixed(1.5))
+            .style(|_| container::Style {
+                background: Some(colors::ON_SURFACE_VARIANT.into()),
+                border: iced::Border {
+                    radius: 1.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+    };
+
+    let glyph = container(column![bar(), bar(), bar()].spacing(3.0).align_x(Alignment::Center))
+        .center(Length::Fill);
+
+    button(glyph)
+        .on_press(on_press)
+        .width(Length::Fixed(26.0))
+        .height(Length::Fixed(26.0))
+        .padding(0)
+        .style(|_theme, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: hovered.then(|| colors::ON_SURFACE.scale_alpha(0.1).into()),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+/// Lighter red used for the destructive "Quit" label (`#FF6B72`).
+const QUIT_LABEL: Color = Color::from_rgb8(255, 107, 114);
+
+/// One row of the app menu popover: a colored glyph tile, a label, and a
+/// keyboard hint, with a per-row hover tint.
+struct AppMenuRow<Message> {
+    glyph: &'static str,
+    glyph_color: Color,
+    tile_bg: Color,
+    label: &'static str,
+    label_color: Color,
+    hint: &'static str,
+    hover_bg: Color,
+    on_press: Message,
+}
+
+fn app_menu_row<'a, Message: Clone + 'a>(row: AppMenuRow<Message>) -> Element<'a, Message> {
+    let AppMenuRow {
+        glyph,
+        glyph_color,
+        tile_bg,
+        label,
+        label_color,
+        hint,
+        hover_bg,
+        on_press,
+    } = row;
+
+    let tile = container(text(glyph.to_string()).size(13.0).color(glyph_color))
+        .center(Length::Fixed(22.0))
+        .style(move |_| container::Style {
+            background: Some(tile_bg.into()),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let content = row![
+        tile,
+        text(label).size(14.0).color(label_color),
+        horizontal(),
+        kbd(hint),
+    ]
+    .spacing(spacing::SPACE_M - spacing::SPACE_XS)
+    .align_y(Alignment::Center);
+
+    button(content)
+        .on_press(on_press)
+        .width(Length::Fill)
+        .padding(spacing::SPACE_S)
+        .style(move |_theme, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: hovered.then(|| hover_bg.into()),
+                text_color: label_color,
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+/// The app menu popover (hamburger, bottom-left): Open Settings + Quit. Styled
+/// to match the actions popover; anchored above the footer's menu button.
+pub fn app_menu<'a, Message: Clone + 'a>(
+    on_settings: Message,
+    on_quit: Message,
+) -> Element<'a, Message> {
+    let settings = app_menu_row(AppMenuRow {
+        glyph: "⚙",
+        glyph_color: colors::ON_SURFACE_VARIANT,
+        tile_bg: colors::ON_SURFACE.scale_alpha(0.1),
+        label: "Open Settings",
+        label_color: colors::ON_SURFACE,
+        hint: "⌘,",
+        hover_bg: colors::ON_SURFACE.scale_alpha(0.08),
+        on_press: on_settings,
+    });
+
+    let quit = app_menu_row(AppMenuRow {
+        glyph: "⏻",
+        glyph_color: colors::PRIMARY,
+        tile_bg: colors::PRIMARY.scale_alpha(0.16),
+        label: "Quit",
+        label_color: QUIT_LABEL,
+        hint: "⌘Q",
+        hover_bg: colors::PRIMARY.scale_alpha(0.12),
+        on_press: on_quit,
+    });
+
+    container(column![settings, quit].width(Length::Fill))
+        .width(Length::Fixed(224.0))
+        .padding(spacing::SPACE_S)
+        .style(|_| container::Style {
+            background: Some(Color::from_rgba8(30, 30, 33, 0.96).into()),
+            border: iced::Border {
+                color: colors::ON_SURFACE.scale_alpha(0.14),
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// The bottom action bar. A hamburger menu button sits at the far left; the
+/// rest shows the selected item's tile and its primary action plus the Actions
+/// (⌘K) affordance, falling back to a no-selection state when nothing is
+/// selected.
+pub fn footer<'a, Message: Clone + 'a>(
+    selected: Option<&'a ListEntry>,
+    on_menu: Message,
+) -> Element<'a, Message> {
+    let menu = menu_button(on_menu);
+
     let bar = match selected {
         Some(entry) => {
             let primary = entry.primary_action_label();
 
             row![
-                render_icon(entry.icon(), icons::SM),
+                menu,
                 horizontal(),
                 text(primary).size(13.0).color(colors::ON_SURFACE),
                 kbd("↵"),
@@ -674,6 +829,7 @@ pub fn footer<'a, Message: 'a>(selected: Option<&'a ListEntry>) -> Element<'a, M
             ]
         }
         None => row![
+            menu,
             text("No selection").size(13.0).color(colors::SECONDARY),
             horizontal(),
             text("Clear search").size(13.0).color(colors::ON_SURFACE),

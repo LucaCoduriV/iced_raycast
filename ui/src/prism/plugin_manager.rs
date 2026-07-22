@@ -14,8 +14,8 @@ use core::{AppState, PluginCommand, PluginRegistry, Preference, PreferenceKind, 
 use iced::{
     Alignment, Color, Element, Length,
     widget::{
-        Id, button, column, container, pick_list, row, scrollable, space::horizontal, text,
-        text_input,
+        Id, button, column, container, mouse_area, pick_list, row, scrollable, space::horizontal,
+        text, text_input,
     },
 };
 
@@ -24,6 +24,10 @@ use super::widgets::{scrollbar_style, slim_scrollbar};
 use crate::design_system::{colors, spacing, typo};
 
 // --- Settings-window palette (matched to the source design) -----------------
+
+/// Corner radius of the settings window chrome (and the title bar / master
+/// panel that sit flush against its edges).
+const WINDOW_RADIUS: f32 = 14.0;
 
 const WINDOW_BG: Color = Color::from_rgb8(0x1c, 0x1c, 0x1f);
 const TITLEBAR_BG: Color = Color::from_rgb8(0x2a, 0x2a, 0x2e);
@@ -154,9 +158,21 @@ pub struct PmCommand {
     pub hotkey: Option<String>,
 }
 
+/// Which settings tab is active. Only General and Extensions have panels;
+/// About stays presentational (as in the source design).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    General,
+    Extensions,
+}
+
 /// Interactions within the Plugin Manager.
 #[derive(Debug, Clone)]
 pub enum PmEvent {
+    /// Switch the active settings tab.
+    SelectTab(SettingsTab),
+    /// Toggle capture of a new launcher hotkey (armed until the next key press).
+    RecordHotkey,
     /// Show a plugin's details.
     Select(String),
     /// Flip a plugin's enabled switch.
@@ -191,6 +207,14 @@ pub enum PmEvent {
 
 /// Live state of the Plugin Manager screen.
 pub struct PluginManagerState {
+    /// The active settings tab (opens on General, matching the design).
+    pub tab: SettingsTab,
+    /// The launcher hotkey shown on the General tab. Only read by the non-Linux
+    /// recorder; on Linux the row shows "Not available".
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    pub launcher_hotkey: core::Hotkey,
+    /// Whether we are armed to capture a new launcher hotkey.
+    pub recording_hotkey: bool,
     pub plugins: Vec<PmPlugin>,
     pub selected_id: Option<String>,
     pub search: String,
@@ -205,6 +229,9 @@ impl PluginManagerState {
         let plugins = build_plugins(registry, app_state);
         let selected_id = plugins.first().map(|p| p.id.clone());
         Self {
+            tab: SettingsTab::General,
+            launcher_hotkey: app_state.launcher_hotkey(),
+            recording_hotkey: false,
             plugins,
             selected_id,
             search: String::new(),
@@ -427,7 +454,7 @@ pub fn view(state: &PluginManagerState) -> Element<'_, PrismEvent> {
     let window = column![
         title_bar(),
         chrome_line(),
-        tab_bar(),
+        tab_bar(state.tab),
         chrome_line(),
         body(state),
     ];
@@ -440,7 +467,7 @@ pub fn view(state: &PluginManagerState) -> Element<'_, PrismEvent> {
             border: iced::Border {
                 color: colors::ON_SURFACE.scale_alpha(0.12),
                 width: 1.0,
-                radius: 14.0.into(),
+                radius: WINDOW_RADIUS.into(),
             },
             ..Default::default()
         })
@@ -481,7 +508,7 @@ fn title_bar<'a>() -> Element<'a, PrismEvent> {
     .align_y(Alignment::Center)
     .spacing(spacing::SPACE_S);
 
-    container(bar)
+    let bar = container(bar)
         .width(Length::Fill)
         .center_y(Length::Fixed(44.0))
         .padding(iced::Padding {
@@ -492,8 +519,19 @@ fn title_bar<'a>() -> Element<'a, PrismEvent> {
         })
         .style(|_| container::Style {
             background: Some(TITLEBAR_BG.into()),
+            // Round the top corners to match the window chrome — `clip` alone
+            // clips to the bounds rectangle, not the rounded border.
+            border: iced::Border {
+                radius: iced::border::top(WINDOW_RADIUS),
+                ..Default::default()
+            },
             ..Default::default()
-        })
+        });
+
+    // Dragging the title bar moves the window. The traffic-light button captures
+    // its own clicks, so pressing it closes rather than starting a drag.
+    mouse_area(bar)
+        .on_press(PrismEvent::DragSettingsWindow)
         .into()
 }
 
@@ -542,12 +580,12 @@ fn traffic_light<'a>(color: Color) -> Element<'a, PrismEvent> {
         .into()
 }
 
-fn tab_bar<'a>() -> Element<'a, PrismEvent> {
-    // Tabs are presentational (as in the source design); Extensions is active.
+fn tab_bar<'a>(active: SettingsTab) -> Element<'a, PrismEvent> {
+    // General and Extensions switch panels; About stays presentational.
     let tabs = row![
-        tab_item("⚙", "General", false),
-        tab_item("▦", "Extensions", true),
-        tab_item("ⓘ", "About", false),
+        tab_item("⚙", "General", SettingsTab::General, active),
+        tab_item("▦", "Extensions", SettingsTab::Extensions, active),
+        tab_item_inert("ⓘ", "About"),
     ]
     .spacing(2.0)
     .align_y(Alignment::Center);
@@ -567,46 +605,255 @@ fn tab_bar<'a>() -> Element<'a, PrismEvent> {
         .into()
 }
 
-fn tab_item<'a>(icon: &str, label: &str, active: bool) -> Element<'a, PrismEvent> {
-    let fg = if active {
+/// A tab's icon-over-label content, tinted for its active/inactive state.
+fn tab_content<'a>(icon: &str, label: &str, fg: Color) -> Element<'a, PrismEvent> {
+    container(
+        column![
+            text(icon.to_string()).size(16.0).color(fg),
+            text(label.to_string())
+                .size(11.0)
+                .font(typo::LABEL_S.2)
+                .color(fg),
+        ]
+        .spacing(3.0)
+        .align_x(Alignment::Center),
+    )
+    .center_x(Length::Fixed(74.0))
+    .padding(iced::Padding {
+        top: 6.0,
+        right: 14.0,
+        bottom: 6.0,
+        left: 14.0,
+    })
+    .into()
+}
+
+/// A clickable settings tab that selects `tab`, highlighted when it is active.
+fn tab_item<'a>(
+    icon: &str,
+    label: &str,
+    tab: SettingsTab,
+    active: SettingsTab,
+) -> Element<'a, PrismEvent> {
+    let is_active = tab == active;
+    let fg = if is_active {
         colors::ON_SURFACE
     } else {
         colors::SECONDARY
     };
 
-    let content = column![
-        text(icon.to_string()).size(16.0).color(fg),
-        text(label.to_string())
-            .size(11.0)
-            .font(typo::LABEL_S.2)
-            .color(fg),
-    ]
-    .spacing(3.0)
-    .align_x(Alignment::Center);
-
-    container(content)
-        .center_x(Length::Fixed(74.0))
-        .padding(iced::Padding {
-            top: 6.0,
-            right: 14.0,
-            bottom: 6.0,
-            left: 14.0,
-        })
-        .style(move |_| container::Style {
-            background: active.then(|| colors::ON_SURFACE.scale_alpha(0.1).into()),
-            border: iced::Border {
-                radius: 8.0.into(),
+    button(tab_content(icon, label, fg))
+        .padding(0.0)
+        .on_press(PrismEvent::PluginManager(PmEvent::SelectTab(tab)))
+        .style(move |_, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: (is_active || hovered)
+                    .then(|| colors::ON_SURFACE.scale_alpha(0.1).into()),
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
+            }
         })
         .into()
 }
 
+/// A presentational (non-clickable) tab, e.g. About.
+fn tab_item_inert<'a>(icon: &str, label: &str) -> Element<'a, PrismEvent> {
+    tab_content(icon, label, colors::SECONDARY)
+}
+
 fn body(state: &PluginManagerState) -> Element<'_, PrismEvent> {
-    row![master(state), vline(Length::Fill), detail(state)]
+    match state.tab {
+        SettingsTab::General => general_body(state),
+        SettingsTab::Extensions => row![master(state), vline(Length::Fill), detail(state)]
+            .height(Length::Fill)
+            .into(),
+    }
+}
+
+// --- General tab ------------------------------------------------------------
+
+/// The General settings panel. Per the source design this is a scrollable form
+/// of grouped sections; only the Activation → Launcher hotkey row is wired up.
+fn general_body(state: &PluginManagerState) -> Element<'_, PrismEvent> {
+    let form = container(
+        column![activation_section(state)]
+            .spacing(28.0)
+            .width(Length::Fill),
+    )
+    .max_width(720.0)
+    .padding(iced::Padding {
+        top: 28.0,
+        right: 32.0,
+        bottom: 40.0,
+        left: 32.0,
+    });
+
+    scrollable(container(form).center_x(Length::Fill).width(Length::Fill))
         .height(Length::Fill)
+        .width(Length::Fill)
+        .direction(slim_scrollbar())
+        .style(scrollbar_style)
         .into()
+}
+
+/// The "Activation" group. Only the Launcher hotkey row is implemented.
+fn activation_section(state: &PluginManagerState) -> Element<'_, PrismEvent> {
+    column![
+        settings_section_header("Activation"),
+        settings_card(column![launcher_hotkey_row(state)]),
+    ]
+    .spacing(12.0)
+    .width(Length::Fill)
+    .into()
+}
+
+/// An uppercase group heading (e.g. "ACTIVATION").
+fn settings_section_header<'a>(label: &str) -> Element<'a, PrismEvent> {
+    text(label.to_uppercase())
+        .size(12.0)
+        .font(typo::LABEL_M.2)
+        .color(colors::SECONDARY)
+        .into()
+}
+
+/// The rounded, hairline-bordered card that wraps a group's rows.
+fn settings_card<'a>(rows: iced::widget::Column<'a, PrismEvent>) -> Element<'a, PrismEvent> {
+    container(rows)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(colors::ON_SURFACE.scale_alpha(0.03).into()),
+            border: iced::Border {
+                color: colors::ON_SURFACE.scale_alpha(0.07),
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            ..Default::default()
+        })
+        .clip(true)
+        .into()
+}
+
+/// The Launcher hotkey row: a title/description on the left and, on the right, a
+/// recorder button showing the bound shortcut as keycaps. Clicking it arms
+/// capture; the next key press (handled at the app boundary) rebinds the global
+/// hotkey. Escape cancels.
+fn launcher_hotkey_row(state: &PluginManagerState) -> Element<'_, PrismEvent> {
+    let labels = column![
+        text("Launcher hotkey")
+            .size(14.0)
+            .font(typo::TITLE_S.2)
+            .color(colors::ON_SURFACE),
+        text("Global shortcut to open the launcher from anywhere.")
+            .size(12.0)
+            .color(colors::SECONDARY),
+    ]
+    .spacing(2.0)
+    .width(Length::Fill);
+
+    container(
+        row![labels, hotkey_recorder(state)]
+            .spacing(spacing::SPACE_M)
+            .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding(iced::Padding {
+        top: 14.0,
+        right: 16.0,
+        bottom: 14.0,
+        left: 16.0,
+    })
+    .into()
+}
+
+/// The clickable hotkey control: a "Recording… press keys" prompt while armed,
+/// otherwise the current shortcut's keycaps.
+///
+/// On Linux the launcher shortcut is a compositor keybind, not something the app
+/// can register or rebind, so the control is replaced with a "Not available"
+/// note instead of an (unactionable) recorder.
+#[cfg(target_os = "linux")]
+fn hotkey_recorder(_state: &PluginManagerState) -> Element<'_, PrismEvent> {
+    text("Not available")
+        .size(13.0)
+        .color(colors::SECONDARY)
+        .into()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn hotkey_recorder(state: &PluginManagerState) -> Element<'_, PrismEvent> {
+    let recording = state.recording_hotkey;
+
+    let inner: Element<PrismEvent> = if recording {
+        text("Recording… press keys")
+            .size(13.0)
+            .color(colors::TERTIARY)
+            .into()
+    } else {
+        let mut keys = row![].spacing(5.0);
+        for cap in state.launcher_hotkey.keycaps() {
+            keys = keys.push(keycap(&cap));
+        }
+        keys.into()
+    };
+
+    button(inner)
+        .on_press(PrismEvent::PluginManager(PmEvent::RecordHotkey))
+        .padding(iced::Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 2.0,
+            left: 4.0,
+        })
+        .style(move |_, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: (recording || hovered)
+                    .then(|| colors::ON_SURFACE.scale_alpha(0.05).into()),
+                border: iced::Border {
+                    color: if recording {
+                        colors::TERTIARY.scale_alpha(0.6)
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                    width: if recording { 1.0 } else { 0.0 },
+                    radius: 8.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+/// A single keycap chip (monospace glyph in a subtle rounded box). Only the
+/// non-Linux recorder renders these (Linux shows "Not available").
+#[cfg(not(target_os = "linux"))]
+fn keycap<'a>(label: &str) -> Element<'a, PrismEvent> {
+    container(
+        text(label.to_string())
+            .font(typo::CODE_M.2)
+            .size(13.0)
+            .color(colors::ON_SURFACE),
+    )
+    .padding(iced::Padding {
+        top: 5.0,
+        right: 11.0,
+        bottom: 5.0,
+        left: 11.0,
+    })
+    .style(|_| container::Style {
+        background: Some(colors::ON_SURFACE.scale_alpha(0.06).into()),
+        border: iced::Border {
+            color: colors::ON_SURFACE.scale_alpha(0.14),
+            width: 1.0,
+            radius: 7.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 // --- Master (installed plugin list) -----------------------------------------
@@ -706,6 +953,12 @@ fn master(state: &PluginManagerState) -> Element<'_, PrismEvent> {
         .height(Length::Fill)
         .style(|_| container::Style {
             background: Some(MASTER_BG.into()),
+            // Round the bottom-left corner so the opaque master column follows
+            // the window chrome (the detail side is transparent and already does).
+            border: iced::Border {
+                radius: iced::border::bottom_left(WINDOW_RADIUS),
+                ..Default::default()
+            },
             ..Default::default()
         })
         .into()

@@ -21,6 +21,99 @@ pub struct AppState {
     /// array of tables) so plugin/preference ids with dots stay simple keys.
     #[serde(default)]
     pub preferences: Vec<StoredPreference>,
+    /// The user's chosen global launcher hotkey. `None` means "use the default"
+    /// (Alt/Option + Space); `#[serde(default)]` keeps older state files valid.
+    #[serde(default)]
+    pub launcher_hotkey: Option<Hotkey>,
+}
+
+/// A platform-agnostic description of a global hotkey: the held modifiers plus
+/// the physical key, identified by its W3C UI Events `code` name (e.g. `Space`,
+/// `KeyK`). Kept free of any platform crate so it can be persisted here and
+/// converted to the OS registration type in the UI layer.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Hotkey {
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub shift: bool,
+    /// The "logo" / Super / Command / Windows key.
+    #[serde(default)]
+    pub meta: bool,
+    /// The physical key's W3C `code` name, e.g. `"Space"`, `"KeyK"`, `"Digit1"`.
+    pub code: String,
+}
+
+impl Default for Hotkey {
+    /// Alt/Option + Space — the launcher's historical default.
+    fn default() -> Self {
+        Self {
+            ctrl: false,
+            alt: true,
+            shift: false,
+            meta: false,
+            code: "Space".to_string(),
+        }
+    }
+}
+
+impl Hotkey {
+    /// Whether at least one modifier is held. A modifier-less hotkey is allowed
+    /// but easy to trigger accidentally, so callers may wish to warn.
+    pub fn has_modifier(&self) -> bool {
+        self.ctrl || self.alt || self.shift || self.meta
+    }
+
+    /// The hotkey rendered as a sequence of keycap labels (modifiers first, in
+    /// the conventional ⌃⌥⇧⌘ order, then the key), for display as chips.
+    pub fn keycaps(&self) -> Vec<String> {
+        let mut caps = Vec::new();
+        if self.ctrl {
+            caps.push("⌃".to_string());
+        }
+        if self.alt {
+            caps.push("⌥".to_string());
+        }
+        if self.shift {
+            caps.push("⇧".to_string());
+        }
+        if self.meta {
+            caps.push("⌘".to_string());
+        }
+        caps.push(prettify_code(&self.code));
+        caps
+    }
+}
+
+/// Turn a W3C key `code` into a short display label: `KeyK` → `K`, `Digit1` →
+/// `1`, `ArrowUp` → `↑`, and a handful of other common glyphs; anything else is
+/// shown as-is.
+fn prettify_code(code: &str) -> String {
+    match code {
+        "Space" => "Space".to_string(),
+        "Enter" | "NumpadEnter" => "↵".to_string(),
+        "Tab" => "⇥".to_string(),
+        "Escape" => "esc".to_string(),
+        "ArrowUp" => "↑".to_string(),
+        "ArrowDown" => "↓".to_string(),
+        "ArrowLeft" => "←".to_string(),
+        "ArrowRight" => "→".to_string(),
+        "Backslash" => "\\".to_string(),
+        "Slash" => "/".to_string(),
+        "Period" => ".".to_string(),
+        "Comma" => ",".to_string(),
+        _ => {
+            if let Some(letter) = code.strip_prefix("Key") {
+                letter.to_string()
+            } else if let Some(digit) = code.strip_prefix("Digit") {
+                digit.to_string()
+            } else {
+                code.to_string()
+            }
+        }
+    }
 }
 
 /// One persisted plugin preference value.
@@ -137,6 +230,17 @@ impl AppState {
         self.preferences
             .iter()
             .map(|pref| (pref.plugin.as_str(), pref.id.as_str(), pref.value.clone()))
+    }
+
+    /// The configured launcher hotkey, or the default (Alt/Option + Space) when
+    /// the user has not set one.
+    pub fn launcher_hotkey(&self) -> Hotkey {
+        self.launcher_hotkey.clone().unwrap_or_default()
+    }
+
+    /// Persist the user's chosen launcher hotkey.
+    pub fn set_launcher_hotkey(&mut self, hotkey: Hotkey) {
+        self.launcher_hotkey = Some(hotkey);
     }
 
     pub fn get_score(&self, entity: &super::Entity) -> u32 {

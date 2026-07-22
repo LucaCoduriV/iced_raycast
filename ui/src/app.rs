@@ -11,8 +11,7 @@ use iced_layershell::to_layer_message;
 use crate::prism;
 use crate::prism::PrismEvent;
 
-/// Initial size of the Plugin Manager window (a normal xdg_toplevel on Linux).
-#[cfg(target_os = "linux")]
+/// Initial size of the Settings (Plugin Manager) window.
 const SETTINGS_SIZE: (u32, u32) = (900, 620);
 /// Size of the launcher surface / window.
 const LAUNCHER_SIZE: (u32, u32) = (700, 500);
@@ -31,9 +30,9 @@ pub struct Raycast {
     /// Non-Linux only: whether the persistent launcher window is currently shown.
     #[cfg(not(target_os = "linux"))]
     launcher_visible: bool,
-    /// The Plugin Manager window while it is open (a separate xdg_toplevel on
-    /// Linux; elsewhere the manager renders inline in the launcher window).
-    #[cfg(target_os = "linux")]
+    /// The Settings (Plugin Manager) window while it is open — a separate,
+    /// movable window on every platform (a normal xdg_toplevel on Linux; a
+    /// borderless `iced::window` elsewhere).
     settings_window: Option<iced::window::Id>,
     /// The `wl-paste --watch` clipboard recorder, owned so it stops when the
     /// agent quits (and dies with the agent via `PR_SET_PDEATHSIG` on a crash).
@@ -54,7 +53,6 @@ impl Raycast {
             launcher: None,
             #[cfg(not(target_os = "linux"))]
             launcher_visible: false,
-            #[cfg(target_os = "linux")]
             settings_window: None,
             // Start the continuous clipboard recorder, owned by this agent.
             #[cfg(target_os = "linux")]
@@ -80,7 +78,7 @@ impl Raycast {
         // main thread with the event loop already running; `update` is exactly
         // that context. `ensure_installed` is a one-time (Once-guarded) setup.
         #[cfg(not(target_os = "linux"))]
-        crate::tray_native::ensure_installed();
+        crate::tray_native::ensure_installed(&self.app_state.launcher_hotkey());
 
         match message {
             Message::PrismEvent(prism_event) => self.handle_prism_event(prism_event),
@@ -92,8 +90,63 @@ impl Raycast {
             Message::Show => self.show_launcher(),
             Message::QuitAgent => self.quit_agent(),
             Message::WindowClosed(id) => self.on_window_closed(id),
+            Message::IcedEvent(event) => self.handle_iced_event(event),
+            Message::DragSettingsWindow => match self.settings_window {
+                Some(id) => iced::window::drag(id),
+                None => Task::none(),
+            },
+            Message::Ignore => Task::none(),
+            // On Linux the layer-shell message macro adds further variants; on
+            // other platforms every variant is already matched above.
+            #[allow(unreachable_patterns)]
             _ => Task::none(),
         }
+    }
+
+    /// While the launcher-hotkey recorder is armed, turn the next real key press
+    /// into a new hotkey: persist it, re-register the global shortcut, and update
+    /// the settings display. Ignored entirely when not recording.
+    fn handle_iced_event(&mut self, event: Event) -> Task<Message> {
+        use iced::keyboard::{self, key};
+
+        if !self.prism.is_recording_hotkey() {
+            return Task::none();
+        }
+
+        let iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            physical_key: key::Physical::Code(code),
+            modifiers,
+            ..
+        }) = event
+        else {
+            return Task::none();
+        };
+
+        let code = format!("{code:?}");
+        // Wait for a non-modifier key; Escape cancels (handled by Prism).
+        if code == "Escape" || is_modifier_code(&code) {
+            return Task::none();
+        }
+
+        let hotkey = core::Hotkey {
+            ctrl: modifiers.control(),
+            alt: modifiers.alt(),
+            shift: modifiers.shift(),
+            meta: modifiers.logo(),
+            code,
+        };
+
+        self.app_state.set_launcher_hotkey(hotkey.clone());
+        if let Err(error) = self.app_state.save() {
+            eprintln!("Failed to save hotkey: {error}");
+        }
+        #[cfg(not(target_os = "linux"))]
+        if let Err(error) = crate::tray_native::rebind(&hotkey) {
+            eprintln!("Failed to rebind hotkey: {error}");
+        }
+        self.prism.set_launcher_hotkey(hotkey);
+
+        Task::none()
     }
 
     /// Launch the selected application/command (the old `Run` body).
@@ -201,11 +254,13 @@ impl Raycast {
             self.launcher = None;
             return Task::none();
         }
-        #[cfg(target_os = "linux")]
         if Some(id) == self.settings_window {
             self.settings_window = None;
             self.prism.close_plugin_manager();
+            #[cfg(target_os = "linux")]
             return self.set_launcher_layer(Layer::Top);
+            #[cfg(not(target_os = "linux"))]
+            return Task::none();
         }
         Task::none()
     }
@@ -240,18 +295,41 @@ impl Raycast {
         task
     }
 
+    /// Route a Prism event, opening/closing the Settings window as the manager
+    /// opens and closes. Settings is its own borderless, movable window; opening
+    /// it hides the launcher (as Raycast dismisses the launcher for Preferences).
     #[cfg(not(target_os = "linux"))]
     fn handle_prism_event(&mut self, prism_event: PrismEvent) -> Task<Message> {
-        self.prism
+        let was_open = self.prism.is_plugin_manager_open();
+        let task = self
+            .prism
             .update(prism_event, &mut self.app_state)
-            .map(map_prism_event)
+            .map(map_prism_event);
+        let now_open = self.prism.is_plugin_manager_open();
+
+        if now_open && !was_open && self.settings_window.is_none() {
+            let (id, open) = iced::window::open(settings_window_settings());
+            self.settings_window = Some(id);
+            return Task::batch([
+                task,
+                open.map(|_| Message::Ignore),
+                iced::window::gain_focus(id),
+                self.close_launcher(),
+            ]);
+        }
+        if !now_open && was_open {
+            return Task::batch([task, self.close_settings_window()]);
+        }
+        task
     }
 
-    /// Close the Plugin Manager window if one is open.
-    #[cfg(target_os = "linux")]
+    /// Close the Settings window if one is open.
     fn close_settings_window(&mut self) -> Task<Message> {
         match self.settings_window.take() {
+            #[cfg(target_os = "linux")]
             Some(id) => Task::done(Message::RemoveWindow(id)),
+            #[cfg(not(target_os = "linux"))]
+            Some(id) => iced::window::close(id),
             None => Task::none(),
         }
     }
@@ -297,7 +375,8 @@ impl Raycast {
     /// Plugin Manager window. Elsewhere the manager renders inline in the
     /// launcher window.
     pub fn view(&self, id: iced::window::Id) -> Element<'_, Message> {
-        #[cfg(target_os = "linux")]
+        // The Settings window (its own window on every platform) renders the
+        // Plugin Manager; every other window renders the launcher.
         if Some(id) == self.settings_window {
             return match self.prism.plugin_manager_view() {
                 Some(view) => view.map(Message::PrismEvent),
@@ -305,16 +384,7 @@ impl Raycast {
             };
         }
 
-        #[cfg(target_os = "linux")]
-        let content = self.prism.view();
-        #[cfg(not(target_os = "linux"))]
-        let content = match self.prism.plugin_manager_view() {
-            Some(view) => view,
-            None => self.prism.view(),
-        };
-
-        let _ = id;
-        container(content.map(Message::PrismEvent)).into()
+        container(self.prism.view().map(Message::PrismEvent)).into()
     }
 
     pub fn style(&self, _theme: &iced::Theme) -> iced::theme::Style {
@@ -330,6 +400,8 @@ fn map_prism_event(event: PrismEvent) -> Message {
     match event {
         PrismEvent::Run => Message::Run,
         PrismEvent::ExitApp => Message::ExitApp,
+        PrismEvent::QuitApp => Message::QuitAgent,
+        PrismEvent::DragSettingsWindow => Message::DragSettingsWindow,
         e => Message::PrismEvent(e),
     }
 }
@@ -418,6 +490,25 @@ fn launcher_window_settings() -> iced::window::Settings {
     }
 }
 
+/// Window settings for the Settings surface (non-Linux): a borderless, movable,
+/// normal-level window. It draws its own title bar (dragged via
+/// [`Message::DragSettingsWindow`]); closing it does not exit the daemon.
+#[cfg(not(target_os = "linux"))]
+fn settings_window_settings() -> iced::window::Settings {
+    iced::window::Settings {
+        size: iced::Size {
+            width: SETTINGS_SIZE.0 as f32,
+            height: SETTINGS_SIZE.1 as f32,
+        },
+        position: iced::window::Position::Centered,
+        resizable: false,
+        decorations: false,
+        transparent: true,
+        exit_on_close_request: false,
+        ..Default::default()
+    }
+}
+
 /// A subscription that listens on the IPC control socket and emits [`Message::Show`]
 /// whenever a bare invocation asks the resident agent to open the launcher.
 fn show_stream() -> impl iced::futures::Stream<Item = Message> {
@@ -452,4 +543,19 @@ pub enum Message {
     QuitAgent,
     /// A window (launcher or Plugin Manager) was closed.
     WindowClosed(iced::window::Id),
+    /// Begin an interactive drag of the Settings window (from its title bar).
+    DragSettingsWindow,
+    /// A no-op, used to discard a window command's output.
+    Ignore,
+}
+
+/// Whether a W3C key `code` names a modifier key (so the hotkey recorder keeps
+/// waiting for a real key rather than binding e.g. `ControlLeft`).
+fn is_modifier_code(code: &str) -> bool {
+    code.starts_with("Control")
+        || code.starts_with("Alt")
+        || code.starts_with("Shift")
+        || code.starts_with("Meta")
+        || code.starts_with("Super")
+        || code.starts_with("Hyper")
 }
