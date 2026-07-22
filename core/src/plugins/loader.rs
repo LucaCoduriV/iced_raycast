@@ -16,14 +16,15 @@ use abi_stable::{
 use directories::ProjectDirs;
 use plugin_api::{
     AbiActionEffect, AbiCommand, AbiFieldValue, AbiFieldValueKind, AbiFormField, AbiGridItem,
-    AbiImageSource, AbiPluginResult, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind,
-    AbiViewResponse, HostPlugin_TO, PluginModRef,
+    AbiImageSource, AbiPluginMeta, AbiPluginResult, AbiPreference, AbiPreferenceKind,
+    AbiPreferenceValue, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind, AbiViewResponse,
+    HostPlugin_TO, PluginModRef,
 };
 
 use super::{
     ActionEffect, Command, FieldKind, FieldValue, FieldValueKind, FormField, GridItem, ImageSource,
-    KeyValue, Plugin, PluginAction, PluginResult, View, ViewBody, ViewEvent, ViewEventKind,
-    ViewResponse,
+    InstallInfo, KeyValue, Plugin, PluginAction, PluginMeta, PluginResult, Preference,
+    PreferenceKind, PreferenceValue, View, ViewBody, ViewEvent, ViewEventKind, ViewResponse,
 };
 use crate::{APPLICATION, ORGANISATION, QUALIFIER, common::Image};
 
@@ -31,6 +32,8 @@ use crate::{APPLICATION, ORGANISATION, QUALIFIER, common::Image};
 /// host's native [`Plugin`] interface.
 struct DynamicPlugin {
     id: String,
+    /// Path to the loaded library file, for reporting install info.
+    path: PathBuf,
     inner: HostPlugin_TO<'static, RBox<()>>,
 }
 
@@ -65,6 +68,67 @@ impl Plugin for DynamicPlugin {
 
     fn handle_event(&self, event: ViewEvent) -> ViewResponse {
         convert_response(self.inner.handle_event(to_abi_event(event)))
+    }
+
+    fn metadata(&self) -> PluginMeta {
+        convert_meta(self.inner.metadata())
+    }
+
+    fn preferences(&self) -> Vec<Preference> {
+        self.inner
+            .preferences()
+            .into_iter()
+            .map(convert_preference)
+            .collect()
+    }
+
+    fn set_preference(&self, id: &str, value: PreferenceValue) {
+        let value = match value {
+            PreferenceValue::Toggle(on) => AbiPreferenceValue::Toggle(on),
+            PreferenceValue::Choice(index) => AbiPreferenceValue::Choice(index),
+            PreferenceValue::Text(text) => AbiPreferenceValue::Text(RString::from(text)),
+        };
+        self.inner.set_preference(RStr::from(id), value);
+    }
+
+    fn install_info(&self) -> Option<InstallInfo> {
+        let metadata = std::fs::metadata(&self.path).ok()?;
+        Some(InstallInfo {
+            size_bytes: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+}
+
+/// Turn a possibly-empty ABI string into `Some(non-empty)` / `None`.
+fn optional(value: RString) -> Option<String> {
+    let value = value.to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn convert_meta(meta: AbiPluginMeta) -> PluginMeta {
+    PluginMeta {
+        name: optional(meta.name),
+        author: optional(meta.author),
+        version: optional(meta.version),
+        description: optional(meta.description),
+    }
+}
+
+fn convert_preference(pref: AbiPreference) -> Preference {
+    Preference {
+        id: pref.id.to_string(),
+        label: pref.label.to_string(),
+        hint: pref.hint.to_string(),
+        kind: match pref.kind {
+            AbiPreferenceKind::Toggle(on) => PreferenceKind::Toggle(on),
+            AbiPreferenceKind::Select { options, selected } => PreferenceKind::Select {
+                options: options.into_iter().map(|o| o.to_string()).collect(),
+                selected,
+            },
+            AbiPreferenceKind::Text(value) => PreferenceKind::Text(value.to_string()),
+            AbiPreferenceKind::Secret(value) => PreferenceKind::Secret(value.to_string()),
+        },
     }
 }
 
@@ -131,7 +195,11 @@ fn load_plugin(path: &Path) -> Result<DynamicPlugin, abi_stable::library::Librar
     let inner = module.new()();
     let id = inner.id().to_string();
 
-    Ok(DynamicPlugin { id, inner })
+    Ok(DynamicPlugin {
+        id,
+        path: path.to_path_buf(),
+        inner,
+    })
 }
 
 #[cfg(test)]
@@ -169,6 +237,34 @@ mod tests {
             example.run_command("uppercase", Some("hello")),
             ActionEffect::CopyToClipboard(text) if text == "HELLO"
         ));
+
+        // Plugin-declared metadata round-trips over the ABI.
+        let meta = example.metadata();
+        assert_eq!(meta.name.as_deref(), Some("Showcase"));
+        assert_eq!(meta.author.as_deref(), Some("lcvitor"));
+        assert!(meta.version.is_some(), "version should be declared");
+        assert!(meta.description.is_some(), "description should be declared");
+
+        // As do plugin-declared preferences (a toggle and a text field).
+        let prefs = example.preferences();
+        assert!(
+            prefs
+                .iter()
+                .any(|p| p.id == "verbose" && matches!(p.kind, PreferenceKind::Toggle(false))),
+            "verbose toggle preference missing"
+        );
+        assert!(
+            prefs
+                .iter()
+                .any(|p| p.id == "greeting" && matches!(p.kind, PreferenceKind::Text(_))),
+            "greeting text preference missing"
+        );
+
+        // Install info is derived host-side from the library file.
+        let info = example
+            .install_info()
+            .expect("install info for a dynamic plugin");
+        assert!(info.size_bytes > 0, "library size should be non-zero");
 
         // The "grid" command pushes a grid view...
         assert!(matches!(
@@ -244,6 +340,18 @@ mod tests {
             gif.run_command("search", None),
             ActionEffect::PushView(view) if matches!(view.body, ViewBody::Grid { .. })
         ));
+
+        // Setting the API key preference switches the provider — observable in
+        // the pushed view's title — proving set_preference round-trips the value
+        // over the ABI and the plugin acts on it.
+        gif.set_preference(
+            "giphy_api_key",
+            PreferenceValue::Text("test-key".to_string()),
+        );
+        match gif.run_command("search", None) {
+            ActionEffect::PushView(view) => assert_eq!(view.title, "GIFs"),
+            other => panic!("expected a grid PushView, got {other:?}"),
+        }
 
         // An empty search returns a (message) grid rather than erroring.
         assert!(matches!(

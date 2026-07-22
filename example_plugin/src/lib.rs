@@ -15,8 +15,8 @@ use plugin_api::{
     export_plugin,
     std_types::{RNone, ROption, RSome, RStr, RString, RVec},
     AbiActionEffect, AbiCommand, AbiFieldKind, AbiFieldValueKind, AbiFormField, AbiGridItem,
-    AbiImageSource, AbiKeyValue, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind,
-    AbiViewResponse, HostPlugin,
+    AbiImageSource, AbiKeyValue, AbiPluginMeta, AbiPreference, AbiPreferenceKind, AbiView,
+    AbiViewBody, AbiViewEvent, AbiViewEventKind, AbiViewResponse, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "example.showcase";
@@ -27,6 +27,34 @@ struct ShowcasePlugin;
 impl HostPlugin for ShowcasePlugin {
     fn id(&self) -> RString {
         PLUGIN_ID.into()
+    }
+
+    fn metadata(&self) -> AbiPluginMeta {
+        AbiPluginMeta {
+            name: "Showcase".into(),
+            author: "lcvitor".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            description: "A reference plugin that demonstrates every surface: commands, \
+                          grids, forms and detail views."
+                .into(),
+        }
+    }
+
+    fn preferences(&self) -> RVec<AbiPreference> {
+        RVec::from(vec![
+            AbiPreference {
+                id: "verbose".into(),
+                label: "Verbose logging".into(),
+                hint: "Print extra diagnostics to the console.".into(),
+                kind: AbiPreferenceKind::Toggle(false),
+            },
+            AbiPreference {
+                id: "greeting".into(),
+                label: "Greeting".into(),
+                hint: "Text prepended to demo output.".into(),
+                kind: AbiPreferenceKind::Text("Hello".into()),
+            },
+        ])
     }
 
     fn commands(&self) -> RVec<AbiCommand> {

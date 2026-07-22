@@ -1,6 +1,6 @@
 //! Renderers for full-screen plugin views (grid / detail / form).
 
-use core::{FieldKind, FieldValueKind, GridItem, ImageSource, ViewBody};
+use core::{FieldKind, FieldValueKind, GridItem, ImageSource, ListRow, ViewBody};
 use iced::{
     Alignment, Color, ContentFit, Element, Length,
     widget::{
@@ -59,6 +59,7 @@ pub fn view_screen<'a>(
             elapsed_ms,
             &state.row_ids,
         ),
+        ViewBody::List { items } => list_body(items, state.selected),
         ViewBody::Detail { body, metadata } => detail_body(body, metadata),
         ViewBody::Form { .. } => form_body(state),
     };
@@ -293,6 +294,84 @@ fn grid_image<'a>(
         ImageSource::Bytes(bytes) => cover(image::Handle::from_bytes(bytes.clone())),
         ImageSource::None => placeholder("image"),
     }
+}
+
+// --- List -------------------------------------------------------------------
+
+fn list_body(items: &[ListRow], selected: usize) -> Element<'_, PrismEvent> {
+    if items.is_empty() {
+        return container(
+            text("Nothing here yet. Copy something, then reopen this list.")
+                .size(13.0)
+                .color(colors::ON_SURFACE_VARIANT),
+        )
+        .center_x(Length::Fill)
+        .height(Length::Fixed(200.0))
+        .into();
+    }
+
+    let mut list = column![].spacing(spacing::SPACE_XS).width(Length::Fill);
+    for (index, item) in items.iter().enumerate() {
+        list = list.push(list_row(item, index == selected));
+    }
+    list.into()
+}
+
+fn list_row(item: &ListRow, is_selected: bool) -> Element<'_, PrismEvent> {
+    let glyph = item.glyph.unwrap_or('•');
+    let tile = container(
+        text(glyph.to_string())
+            .size(15.0)
+            .font(typo::TITLE_M.2)
+            .color(colors::ON_SURFACE),
+    )
+    .center(Length::Fixed(30.0))
+    .style(|_| container::Style {
+        background: Some(colors::ON_SURFACE.scale_alpha(0.06).into()),
+        border: iced::Border {
+            radius: 7.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    let mut lines = column![
+        text(item.title.clone())
+            .typography(typo::TITLE_S)
+            .color(colors::ON_SURFACE)
+    ]
+    .spacing(1.0)
+    .width(Length::Fill);
+    if let Some(subtitle) = &item.subtitle {
+        lines = lines.push(
+            text(subtitle.clone())
+                .typography(typo::BODY_S)
+                .color(colors::ON_SURFACE_VARIANT),
+        );
+    }
+
+    let content = row![tile, lines]
+        .spacing(spacing::SPACE_M)
+        .align_y(Alignment::Center);
+
+    button(content)
+        .on_press(PrismEvent::ViewItemActivated(item.id.clone()))
+        .width(Length::Fill)
+        .padding(spacing::SPACE_S)
+        .style(move |_theme, status| {
+            let hovered = status == button::Status::Hovered;
+            button::Style {
+                background: (is_selected || hovered)
+                    .then(|| colors::ON_SURFACE.scale_alpha(0.1).into()),
+                text_color: colors::ON_SURFACE,
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
 }
 
 // --- Detail -----------------------------------------------------------------

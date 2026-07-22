@@ -34,16 +34,22 @@ pub enum KeyAction {
     Submit,
     EscapePressed,
     ToggleActions,
+    OpenPluginManager,
 }
 
 pub fn map_key_to_action(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<KeyAction> {
     // ⌘K / Ctrl+K toggles the actions menu. Other modified chords are ignored
     // so they don't get misread as list navigation.
     if modifiers.command() {
-        if let keyboard::Key::Character(c) = key
-            && c.as_str().eq_ignore_ascii_case("k")
-        {
-            return Some(KeyAction::ToggleActions);
+        if let keyboard::Key::Character(c) = key {
+            // ⌘K / Ctrl+K toggles the actions menu.
+            if c.as_str().eq_ignore_ascii_case("k") {
+                return Some(KeyAction::ToggleActions);
+            }
+            // ⌘, / Ctrl+, opens the Plugin Manager (settings), like Raycast.
+            if c.as_str() == "," {
+                return Some(KeyAction::OpenPluginManager);
+            }
         }
         return None;
     }

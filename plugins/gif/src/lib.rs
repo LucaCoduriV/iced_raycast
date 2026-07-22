@@ -9,11 +9,14 @@
 //! more. Selecting a GIF copies its link. Network calls happen in
 //! `handle_event`, which the host runs off the UI thread.
 
+use std::sync::RwLock;
+
 use plugin_api::{
     export_plugin,
     std_types::{RNone, ROption, RSome, RStr, RString, RVec},
-    AbiActionEffect, AbiCommand, AbiGridItem, AbiImageSource, AbiView, AbiViewBody, AbiViewEvent,
-    AbiViewEventKind, AbiViewResponse, HostPlugin,
+    AbiActionEffect, AbiCommand, AbiGridItem, AbiImageSource, AbiPluginMeta, AbiPreference,
+    AbiPreferenceKind, AbiPreferenceValue, AbiView, AbiViewBody, AbiViewEvent, AbiViewEventKind,
+    AbiViewResponse, HostPlugin,
 };
 
 const PLUGIN_ID: &str = "media.gif";
@@ -22,18 +25,99 @@ const COLUMNS: u32 = 4;
 const PAGE: usize = 12;
 
 #[derive(Default)]
-struct GifPlugin;
+struct GifPlugin {
+    /// Giphy API key set via the settings preference (interior-mutable so
+    /// `set_preference`, which takes `&self`, can update it). Empty means unset.
+    api_key: RwLock<String>,
+}
+
+impl GifPlugin {
+    /// The effective Giphy key: the one set in settings, else `GIPHY_API_KEY`.
+    fn effective_key(&self) -> Option<String> {
+        let stored = self
+            .api_key
+            .read()
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty());
+
+        stored.or_else(|| {
+            std::env::var("GIPHY_API_KEY")
+                .ok()
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty())
+        })
+    }
+
+    /// The provider chosen by the effective key.
+    fn provider(&self) -> Provider {
+        Provider::for_key(self.effective_key())
+    }
+}
 
 impl HostPlugin for GifPlugin {
     fn id(&self) -> RString {
         PLUGIN_ID.into()
     }
 
+    fn metadata(&self) -> AbiPluginMeta {
+        AbiPluginMeta {
+            name: "GIF Search".into(),
+            author: "lcvitor".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            description: "Find and copy the perfect GIF without leaving your keyboard — \
+                          search, preview animations inline and paste anywhere."
+                .into(),
+        }
+    }
+
+    fn preferences(&self) -> RVec<AbiPreference> {
+        RVec::from(vec![
+            AbiPreference {
+                id: "giphy_api_key".into(),
+                label: "Giphy API key".into(),
+                hint: "Paste a Giphy API key to search all GIFs. Without one, a keyless \
+                       provider (The Office GIFs) is used."
+                    .into(),
+                // The current key (masked in the UI). Empty unless the user set
+                // one; the `GIPHY_API_KEY` env var is a separate fallback and is
+                // not surfaced here.
+                kind: AbiPreferenceKind::Secret(
+                    self.api_key
+                        .read()
+                        .map(|key| key.clone())
+                        .unwrap_or_default()
+                        .into(),
+                ),
+            },
+            AbiPreference {
+                id: "rating".into(),
+                label: "Rating".into(),
+                hint: "Filter out mature results.".into(),
+                kind: AbiPreferenceKind::Select {
+                    options: RVec::from(vec!["G".into(), "PG".into(), "PG-13".into(), "R".into()]),
+                    selected: 2,
+                },
+            },
+        ])
+    }
+
+    fn set_preference(&self, id: RStr<'_>, value: AbiPreferenceValue) {
+        if id.as_str() != "giphy_api_key" {
+            return;
+        }
+        if let AbiPreferenceValue::Text(key) = value {
+            if let Ok(mut guard) = self.api_key.write() {
+                *guard = key.to_string();
+            }
+        }
+    }
+
     fn commands(&self) -> RVec<AbiCommand> {
         RVec::from(vec![AbiCommand {
             id: "search".into(),
             title: "Search GIFs".into(),
-            subtitle: RSome(RString::from(Provider::detect().subtitle())),
+            subtitle: RSome(RString::from(self.provider().subtitle())),
             keywords: RVec::from(vec!["gif".into(), "gifs".into(), "giphy".into()]),
             icon_path: RNone,
             glyph: RSome(u32::from('G')),
@@ -46,7 +130,7 @@ impl HostPlugin for GifPlugin {
 
     fn run_command(&self, command_id: RStr<'_>, _argument: ROption<RString>) -> AbiActionEffect {
         if command_id.as_str() == "search" {
-            AbiActionEffect::PushView(grid_view(Provider::detect().title(), RVec::new()))
+            AbiActionEffect::PushView(grid_view(self.provider().title(), RVec::new()))
         } else {
             AbiActionEffect::None
         }
@@ -59,10 +143,11 @@ impl HostPlugin for GifPlugin {
 
         match event.kind {
             AbiViewEventKind::Search(term) => {
-                AbiViewResponse::Update(search_view(term.as_str().trim()))
+                AbiViewResponse::Update(search_view(term.as_str().trim(), &self.provider()))
             }
             AbiViewEventKind::LoadMore { term, offset } => {
-                let items = Provider::detect()
+                let items = self
+                    .provider()
                     .fetch(term.as_str().trim(), offset as usize)
                     .unwrap_or_default();
                 AbiViewResponse::Append(items)
@@ -75,9 +160,7 @@ impl HostPlugin for GifPlugin {
     }
 }
 
-fn search_view(term: &str) -> AbiView {
-    let provider = Provider::detect();
-
+fn search_view(term: &str, provider: &Provider) -> AbiView {
     match provider.fetch(term, 0) {
         Ok(items) if !items.is_empty() => grid_view(provider.title(), items),
         Ok(_) => message_view(provider.empty_hint(term)),
@@ -93,9 +176,9 @@ enum Provider {
 }
 
 impl Provider {
-    fn detect() -> Self {
-        match std::env::var("GIPHY_API_KEY") {
-            Ok(key) if !key.trim().is_empty() => Provider::Giphy(key),
+    fn for_key(key: Option<String>) -> Self {
+        match key {
+            Some(key) if !key.trim().is_empty() => Provider::Giphy(key),
             _ => Provider::FinerGifs,
         }
     }

@@ -1,8 +1,11 @@
 mod items;
 mod keybindings;
+mod plugin_manager;
 pub mod state;
 mod views;
 mod widgets;
+
+use self::plugin_manager::{PluginManagerState, PmEvent};
 
 use std::sync::Arc;
 
@@ -51,6 +54,7 @@ impl Prism {
             default_row_height: 54.0,
             show_argument_input: false,
             is_argument_input_active: false,
+            command_held: false,
             show_actions: false,
             actions_selected_index: 0,
             recent_arguments: Vec::new(),
@@ -58,6 +62,7 @@ impl Prism {
             image_cache: std::collections::HashMap::new(),
             anim_epoch: std::time::Instant::now(),
             anim_now: std::time::Instant::now(),
+            plugin_manager: None,
         };
 
         let registry = Arc::new(PluginRegistry::with_builtins());
@@ -81,8 +86,41 @@ impl Prism {
     }
 
     pub fn update(&mut self, message: PrismEvent, app_state: &mut AppState) -> Task<PrismEvent> {
+        // While the Plugin Manager is open it owns the window; ignore launcher
+        // navigation/search events. Its own events (and Escape/exit) still pass.
+        if self.state.plugin_manager.is_some()
+            && !matches!(
+                message,
+                PrismEvent::PluginManager(_)
+                    | PrismEvent::OpenPluginManager
+                    | PrismEvent::EscapePressed
+                    | PrismEvent::ExitApp
+                    | PrismEvent::ModifiersChanged(_)
+            )
+        {
+            return Task::none();
+        }
+
         match message {
             PrismEvent::Initialized => focus(self.state.search_id.clone()),
+
+            PrismEvent::ModifiersChanged(held) => {
+                self.state.command_held = held;
+                Task::none()
+            }
+
+            PrismEvent::OpenPluginManager => {
+                let pm = PluginManagerState::new(&self.registry, app_state);
+                let focus_search = pm.search_id.clone();
+                self.state.plugin_manager = Some(pm);
+                // Clear any transient launcher UI that would linger underneath.
+                self.state.show_actions = false;
+                self.state.show_argument_input = false;
+                self.state.is_argument_input_active = false;
+                focus(focus_search)
+            }
+
+            PrismEvent::PluginManager(event) => self.handle_plugin_manager(event, app_state),
 
             PrismEvent::Scrolled(viewport) => {
                 self.state.current_scroll_offset = viewport.absolute_offset().y;
@@ -112,6 +150,15 @@ impl Prism {
             }
 
             PrismEvent::SearchInput(query) => {
+                // Ctrl+, (open settings) leaks its `,` into the focused input;
+                // ignore a comma inserted while the command modifier is held.
+                // (Normal comma typing has no modifier, so it is unaffected, and
+                // multi-character pastes are not.)
+                if self.state.command_held && inserted_char(&self.state.query, &query) == Some(',')
+                {
+                    return Task::none();
+                }
+
                 self.state.query = query;
                 self.state.selected_index = 0;
                 self.state.argument = None;
@@ -360,6 +407,16 @@ impl Prism {
             }
 
             PrismEvent::EscapePressed => {
+                // The Plugin Manager captures Escape: first close its confirm
+                // dialog, then the manager itself.
+                if let Some(pm) = self.state.plugin_manager.as_mut() {
+                    if pm.confirming {
+                        pm.confirming = false;
+                        return Task::none();
+                    }
+                    self.state.plugin_manager = None;
+                    return focus(self.state.search_id.clone());
+                }
                 if !self.state.views.is_empty() {
                     return self.update(PrismEvent::PopView, app_state);
                 }
@@ -394,6 +451,14 @@ impl Prism {
             }
 
             PrismEvent::ViewSearchInput(text) => {
+                // Same modifier-chord leak guard as the main search input.
+                if self.state.command_held
+                    && let Some(top) = self.state.views.last()
+                    && inserted_char(&top.search, &text) == Some(',')
+                {
+                    return Task::none();
+                }
+
                 let already_searching = match self.state.views.last_mut() {
                     Some(top) => {
                         top.search = text.clone();
@@ -452,6 +517,13 @@ impl Prism {
 
                 match &top.view.body {
                     core::ViewBody::Grid { items, .. } => match items.get(top.selected) {
+                        Some(item) => {
+                            let id = item.id.clone();
+                            self.dispatch_view_event(ViewEventKind::Activate(id))
+                        }
+                        None => Task::none(),
+                    },
+                    core::ViewBody::List { items } => match items.get(top.selected) {
                         Some(item) => {
                             let id = item.id.clone();
                             self.dispatch_view_event(ViewEventKind::Activate(id))
@@ -556,6 +628,103 @@ impl Prism {
             }
 
             _ => Task::none(),
+        }
+    }
+
+    /// Apply a Plugin Manager interaction. Enable toggles and uninstall are
+    /// session-local, but preference changes persist (to `app_state`) and are
+    /// pushed to the owning plugin via the registry.
+    fn handle_plugin_manager(
+        &mut self,
+        event: PmEvent,
+        app_state: &mut AppState,
+    ) -> Task<PrismEvent> {
+        // Closing needs `self.state` (not the borrowed manager), so handle it first.
+        if let PmEvent::Close = event {
+            self.state.plugin_manager = None;
+            return focus(self.state.search_id.clone());
+        }
+
+        let Some(pm) = self.state.plugin_manager.as_mut() else {
+            return Task::none();
+        };
+
+        match event {
+            PmEvent::Close => {}
+            PmEvent::Select(id) => pm.selected_id = Some(id),
+            PmEvent::ToggleEnabled(id) => {
+                if let Some(plugin) = pm.plugins.iter_mut().find(|p| p.id == id) {
+                    plugin.enabled = !plugin.enabled;
+                }
+            }
+            PmEvent::ActivatePref { plugin, index } => {
+                // Advance the control (flip a toggle) and commit the new value.
+                let changed = pm
+                    .plugins
+                    .iter_mut()
+                    .find(|p| p.id == plugin)
+                    .and_then(|target| target.prefs.get_mut(index))
+                    .and_then(|pref| {
+                        pref.control
+                            .activate()
+                            .map(|value| (pref.id.clone(), value))
+                    });
+                commit_pref(&self.registry, app_state, &plugin, changed);
+            }
+            PmEvent::SelectPref {
+                plugin,
+                index,
+                option,
+            } => {
+                let changed = pm
+                    .plugins
+                    .iter_mut()
+                    .find(|p| p.id == plugin)
+                    .and_then(|target| target.prefs.get_mut(index))
+                    .and_then(|pref| {
+                        pref.control
+                            .set_selected(option)
+                            .map(|value| (pref.id.clone(), value))
+                    });
+                commit_pref(&self.registry, app_state, &plugin, changed);
+            }
+            PmEvent::EditPref {
+                plugin,
+                index,
+                value,
+            } => {
+                let changed = pm
+                    .plugins
+                    .iter_mut()
+                    .find(|p| p.id == plugin)
+                    .and_then(|target| target.prefs.get_mut(index))
+                    .and_then(|pref| {
+                        pref.control
+                            .set_text(value)
+                            .map(|value| (pref.id.clone(), value))
+                    });
+                commit_pref(&self.registry, app_state, &plugin, changed);
+            }
+            PmEvent::Search(text) => pm.search = text,
+            PmEvent::UninstallRequest => pm.confirming = true,
+            PmEvent::UninstallCancel => pm.confirming = false,
+            PmEvent::UninstallConfirm => {
+                if let Some(id) = pm.selected_id.clone() {
+                    pm.plugins.retain(|p| p.id != id);
+                }
+                pm.confirming = false;
+                pm.selected_id = pm.plugins.first().map(|p| p.id.clone());
+            }
+        }
+
+        Task::none()
+    }
+
+    /// Push every persisted preference value into its owning plugin, so plugins
+    /// start up configured as the user last left them. Called once at launch.
+    pub fn hydrate_preferences(&self, app_state: &AppState) {
+        for (plugin_id, pref_id, value) in app_state.all_preferences() {
+            self.registry.set_preference(plugin_id, pref_id, value);
         }
     }
 
@@ -875,9 +1044,8 @@ impl Prism {
     }
 
     pub fn subscription(&self) -> Subscription<PrismEvent> {
-        let keys = event::listen_with(|event, _status, _window| {
-            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event
-            {
+        let keys = event::listen_with(|event, _status, _window| match event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 keybindings::map_key_to_action(&key, modifiers).map(|action| match action {
                     keybindings::KeyAction::SelectPrevious => PrismEvent::SelectPrevious,
                     keybindings::KeyAction::SelectNext => PrismEvent::SelectNext,
@@ -886,10 +1054,16 @@ impl Prism {
                     keybindings::KeyAction::Submit => PrismEvent::Submit,
                     keybindings::KeyAction::EscapePressed => PrismEvent::EscapePressed,
                     keybindings::KeyAction::ToggleActions => PrismEvent::ToggleActions,
+                    keybindings::KeyAction::OpenPluginManager => PrismEvent::OpenPluginManager,
                 })
-            } else {
-                None
             }
+            // Track the command/ctrl modifier so we can suppress a printable
+            // character (e.g. the `,` in Ctrl+,) that a chord leaks into a
+            // focused text input.
+            iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                Some(PrismEvent::ModifiersChanged(modifiers.command()))
+            }
+            _ => None,
         });
 
         // Only drive animation frames while a grid with animated GIFs is shown.
@@ -931,6 +1105,43 @@ impl Prism {
         self.get_selected_entry()
             .map(|e| widgets::actions_for(&e.entry).len())
             .unwrap_or(0)
+    }
+
+    /// Reset the launcher to a fresh state for a new "show" (the resident agent
+    /// reuses one warm `Prism` across opens). Keeps the loaded entries and the
+    /// registry; only clears the transient query/selection/navigation state.
+    pub fn reset(&mut self) {
+        self.state.query.clear();
+        self.state.selected_index = 0;
+        self.state.entries = self.state.all_entries.clone();
+        self.state.argument = None;
+        self.state.show_argument_input = false;
+        self.state.is_argument_input_active = false;
+        self.state.show_actions = false;
+        self.state.actions_selected_index = 0;
+        self.state.views.clear();
+        self.state.plugin_manager = None;
+    }
+
+    /// A task that focuses the launcher's search input (used after showing).
+    pub fn focus_search(&self) -> Task<PrismEvent> {
+        focus(self.state.search_id.clone())
+    }
+
+    /// Whether the Plugin Manager settings screen is currently open.
+    pub fn is_plugin_manager_open(&self) -> bool {
+        self.state.plugin_manager.is_some()
+    }
+
+    /// Force the Plugin Manager closed (e.g. its window was closed externally).
+    pub fn close_plugin_manager(&mut self) {
+        self.state.plugin_manager = None;
+    }
+
+    /// The Plugin Manager screen, when open. Rendered in its own window on
+    /// Linux (a normal xdg_toplevel) and inline in the single window elsewhere.
+    pub fn plugin_manager_view(&self) -> Option<Element<'_, PrismEvent>> {
+        self.state.plugin_manager.as_ref().map(plugin_manager::view)
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, PrismEvent> {
@@ -1074,6 +1285,8 @@ pub enum PrismEvent {
     EscapePressed,
     ExitApp,
     ToggleActions,
+    /// The command/ctrl modifier was pressed (`true`) or released (`false`).
+    ModifiersChanged(bool),
     InvokeAction(usize),
     ArgumentSelected(String),
 
@@ -1111,6 +1324,71 @@ pub enum PrismEvent {
         id: Id,
         height: f32,
     },
+
+    // --- Plugin Manager (settings) ---
+    /// Open the Plugin Manager settings screen.
+    OpenPluginManager,
+    /// An interaction within the Plugin Manager.
+    PluginManager(PmEvent),
+}
+
+/// Persist a changed preference value and push it to its owning plugin. `None`
+/// (no interactive change) is a no-op.
+fn commit_pref(
+    registry: &PluginRegistry,
+    app_state: &mut AppState,
+    plugin: &str,
+    changed: Option<(String, core::PreferenceValue)>,
+) {
+    let Some((pref_id, value)) = changed else {
+        return;
+    };
+    app_state.set_preference(plugin, &pref_id, value.clone());
+    registry.set_preference(plugin, &pref_id, value);
+    if let Err(e) = app_state.save() {
+        eprintln!("Failed to save preferences: {e}");
+    }
+}
+
+/// If `new` is `old` with exactly one character inserted, return that character.
+/// Used to detect a single printable character leaked by a modifier chord.
+fn inserted_char(old: &str, new: &str) -> Option<char> {
+    let old: Vec<char> = old.chars().collect();
+    let new: Vec<char> = new.chars().collect();
+    if new.len() != old.len() + 1 {
+        return None;
+    }
+    let mut i = 0;
+    while i < old.len() && old[i] == new[i] {
+        i += 1;
+    }
+    // `new[i]` is the inserted character; everything after it must still match.
+    (old[i..] == new[i + 1..]).then(|| new[i])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inserted_char;
+
+    #[test]
+    fn detects_single_inserted_character() {
+        // A comma inserted at the end, middle, and start.
+        assert_eq!(inserted_char("2 + 2", "2 + 2,"), Some(','));
+        assert_eq!(inserted_char("firefox", "fire,fox"), Some(','));
+        assert_eq!(inserted_char("abc", ",abc"), Some(','));
+        assert_eq!(inserted_char("", ","), Some(','));
+        // A non-comma single insert is still detected (caller filters on value).
+        assert_eq!(inserted_char("abc", "abcd"), Some('d'));
+    }
+
+    #[test]
+    fn ignores_non_single_inserts() {
+        // Unchanged, multi-character paste, and replacements are not inserts.
+        assert_eq!(inserted_char("abc", "abc"), None);
+        assert_eq!(inserted_char("abc", "abcde"), None);
+        assert_eq!(inserted_char("abc", "axyc"), None);
+        assert_eq!(inserted_char("abc", "ab"), None);
+    }
 }
 
 fn measure_all_visible_items(state: &PrismState) -> Task<PrismEvent> {

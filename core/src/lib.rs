@@ -3,8 +3,10 @@ use crate::plugins::Command;
 pub use crate::common::Image;
 pub use crate::plugins::{
     ActionEffect, Command as PluginCommand, FieldKind, FieldValue, FieldValueKind, FormField,
-    GridItem, ImageSource, KeyValue, Plugin, PluginAction, PluginRegistry, PluginResult, View,
-    ViewBody, ViewEvent, ViewEventKind, ViewResponse,
+    GridItem, ImageSource, InstallInfo, KeyValue, ListRow, Plugin, PluginAction, PluginMeta,
+    PluginRegistry, PluginResult, Preference, PreferenceKind, PreferenceValue, View, ViewBody,
+    ViewEvent, ViewEventKind, ViewResponse, clear_clipboard_history, clipboard_recording_enabled,
+    record_clipboard, set_clipboard_recording,
 };
 use anyhow::Result;
 pub use application::App;
