@@ -57,6 +57,7 @@ impl Prism {
             command_held: false,
             show_actions: false,
             actions_selected_index: 0,
+            show_menu: false,
             recent_arguments: Vec::new(),
             views: Vec::new(),
             image_cache: std::collections::HashMap::new(),
@@ -88,17 +89,29 @@ impl Prism {
     pub fn update(&mut self, message: PrismEvent, app_state: &mut AppState) -> Task<PrismEvent> {
         // While the Plugin Manager is open it owns the window; ignore launcher
         // navigation/search events. Its own events (and Escape/exit) still pass.
-        if self.state.plugin_manager.is_some()
-            && !matches!(
-                message,
-                PrismEvent::PluginManager(_)
-                    | PrismEvent::OpenPluginManager
-                    | PrismEvent::EscapePressed
-                    | PrismEvent::ExitApp
-                    | PrismEvent::ModifiersChanged(_)
-            )
-        {
-            return Task::none();
+        // While recording a hotkey it narrows further so a stray chord (⌘Q etc.)
+        // can't fire mid-capture — only its own events and Escape (cancel) pass.
+        if let Some(pm) = self.state.plugin_manager.as_ref() {
+            let allowed = if pm.recording_hotkey {
+                matches!(
+                    message,
+                    PrismEvent::PluginManager(_) | PrismEvent::EscapePressed
+                )
+            } else {
+                matches!(
+                    message,
+                    PrismEvent::PluginManager(_)
+                        | PrismEvent::OpenPluginManager
+                        | PrismEvent::EscapePressed
+                        | PrismEvent::ExitApp
+                        | PrismEvent::QuitApp
+                        | PrismEvent::DragSettingsWindow
+                        | PrismEvent::ModifiersChanged(_)
+                )
+            };
+            if !allowed {
+                return Task::none();
+            }
         }
 
         match message {
@@ -115,6 +128,7 @@ impl Prism {
                 self.state.plugin_manager = Some(pm);
                 // Clear any transient launcher UI that would linger underneath.
                 self.state.show_actions = false;
+                self.state.show_menu = false;
                 self.state.show_argument_input = false;
                 self.state.is_argument_input_active = false;
                 focus(focus_search)
@@ -165,6 +179,7 @@ impl Prism {
                 self.state.show_argument_input = false;
                 self.state.is_argument_input_active = false;
                 self.state.show_actions = false;
+                self.state.show_menu = false;
                 self.state.actions_selected_index = 0;
                 // Query-driven plugin results (e.g. calculator) are produced
                 // fresh for this query and shown ahead of the filtered list;
@@ -374,6 +389,21 @@ impl Prism {
                 Task::none()
             }
 
+            PrismEvent::ToggleMenu => {
+                self.state.show_menu = !self.state.show_menu;
+                // The app menu and the actions popover are mutually exclusive.
+                self.state.show_actions = false;
+                Task::none()
+            }
+
+            // Bubble up to the app boundary, where `map_prism_event` turns it
+            // into `Message::QuitAgent` (a full quit, not just hiding the
+            // launcher like `ExitApp`).
+            PrismEvent::QuitApp => Task::done(PrismEvent::QuitApp),
+
+            // Bubble up so the app can start an interactive window drag.
+            PrismEvent::DragSettingsWindow => Task::done(PrismEvent::DragSettingsWindow),
+
             PrismEvent::InvokeAction(index) => {
                 self.state.actions_selected_index = index;
 
@@ -407,9 +437,13 @@ impl Prism {
             }
 
             PrismEvent::EscapePressed => {
-                // The Plugin Manager captures Escape: first close its confirm
-                // dialog, then the manager itself.
+                // The Plugin Manager captures Escape: first cancel hotkey
+                // recording, then close its confirm dialog, then the manager.
                 if let Some(pm) = self.state.plugin_manager.as_mut() {
+                    if pm.recording_hotkey {
+                        pm.recording_hotkey = false;
+                        return Task::none();
+                    }
                     if pm.confirming {
                         pm.confirming = false;
                         return Task::none();
@@ -422,6 +456,9 @@ impl Prism {
                 }
                 if self.state.show_actions {
                     self.state.show_actions = false;
+                    Task::none()
+                } else if self.state.show_menu {
+                    self.state.show_menu = false;
                     Task::none()
                 } else if self.state.is_argument_input_active {
                     self.state.argument = Option::None;
@@ -651,6 +688,10 @@ impl Prism {
 
         match event {
             PmEvent::Close => {}
+            PmEvent::SelectTab(tab) => pm.tab = tab,
+            // Arm/disarm hotkey capture; the app-level key handler records the
+            // next real key press (see `Raycast::handle_iced_event`).
+            PmEvent::RecordHotkey => pm.recording_hotkey = !pm.recording_hotkey,
             PmEvent::Select(id) => pm.selected_id = Some(id),
             PmEvent::ToggleEnabled(id) => {
                 if let Some(plugin) = pm.plugins.iter_mut().find(|p| p.id == id) {
@@ -1055,6 +1096,7 @@ impl Prism {
                     keybindings::KeyAction::EscapePressed => PrismEvent::EscapePressed,
                     keybindings::KeyAction::ToggleActions => PrismEvent::ToggleActions,
                     keybindings::KeyAction::OpenPluginManager => PrismEvent::OpenPluginManager,
+                    keybindings::KeyAction::QuitApp => PrismEvent::QuitApp,
                 })
             }
             // Track the command/ctrl modifier so we can suppress a printable
@@ -1136,6 +1178,23 @@ impl Prism {
     /// Force the Plugin Manager closed (e.g. its window was closed externally).
     pub fn close_plugin_manager(&mut self) {
         self.state.plugin_manager = None;
+    }
+
+    /// Whether the settings screen is armed to capture a new launcher hotkey.
+    pub fn is_recording_hotkey(&self) -> bool {
+        self.state
+            .plugin_manager
+            .as_ref()
+            .is_some_and(|pm| pm.recording_hotkey)
+    }
+
+    /// Commit a newly-recorded launcher hotkey to the settings display and stop
+    /// recording. Persisting and re-registering happen at the app boundary.
+    pub fn set_launcher_hotkey(&mut self, hotkey: core::Hotkey) {
+        if let Some(pm) = self.state.plugin_manager.as_mut() {
+            pm.launcher_hotkey = hotkey;
+            pm.recording_hotkey = false;
+        }
     }
 
     /// The Plugin Manager screen, when open. Rendered in its own window on
@@ -1225,7 +1284,7 @@ impl Prism {
                 search_section,
                 widgets::divider(),
                 middle,
-                widgets::footer(selected_entry.map(|e| &e.entry)),
+                widgets::footer(selected_entry.map(|e| &e.entry), PrismEvent::ToggleMenu),
             ]
             .into()
         };
@@ -1261,6 +1320,26 @@ impl Prism {
             return iced::widget::stack![main, overlay].into();
         }
 
+        // Overlay the app menu (Settings / Quit), anchored bottom-left above the
+        // footer's hamburger button.
+        if self.state.show_menu {
+            let popover = widgets::app_menu(PrismEvent::OpenPluginManager, PrismEvent::QuitApp);
+
+            let overlay = container(popover)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Left)
+                .align_y(iced::alignment::Vertical::Bottom)
+                .padding(iced::Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 50.0,
+                    left: 10.0,
+                });
+
+            return iced::widget::stack![main, overlay].into();
+        }
+
         main.into()
     }
 }
@@ -1284,7 +1363,13 @@ pub enum PrismEvent {
     Run,
     EscapePressed,
     ExitApp,
+    /// Quit the whole app (bubbled to `Message::QuitAgent`), from the app menu.
+    QuitApp,
+    /// Begin dragging the Settings window (bubbled to `Message::DragSettingsWindow`).
+    DragSettingsWindow,
     ToggleActions,
+    /// Toggle the app menu (hamburger, bottom-left) popover.
+    ToggleMenu,
     /// The command/ctrl modifier was pressed (`true`) or released (`false`).
     ModifiersChanged(bool),
     InvokeAction(usize),

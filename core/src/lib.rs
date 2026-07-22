@@ -11,7 +11,7 @@ pub use crate::plugins::{
 use anyhow::Result;
 pub use application::App;
 pub use application::Application;
-pub use common::AppState;
+pub use common::{AppState, Hotkey};
 
 mod application;
 pub mod clipboard;

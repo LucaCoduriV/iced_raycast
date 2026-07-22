@@ -35,6 +35,7 @@ pub enum KeyAction {
     EscapePressed,
     ToggleActions,
     OpenPluginManager,
+    QuitApp,
 }
 
 pub fn map_key_to_action(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<KeyAction> {
@@ -49,6 +50,10 @@ pub fn map_key_to_action(key: &keyboard::Key, modifiers: keyboard::Modifiers) ->
             // ⌘, / Ctrl+, opens the Plugin Manager (settings), like Raycast.
             if c.as_str() == "," {
                 return Some(KeyAction::OpenPluginManager);
+            }
+            // ⌘Q / Ctrl+Q quits the app (matches the app-menu shortcut).
+            if c.as_str().eq_ignore_ascii_case("q") {
+                return Some(KeyAction::QuitApp);
             }
         }
         return None;
