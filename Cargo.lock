@@ -920,6 +920,7 @@ dependencies = [
  "ureq",
  "walkdir",
  "which",
+ "windows 0.56.0",
 ]
 
 [[package]]
