@@ -91,8 +91,6 @@ pub struct PrismState {
     pub scroll_id: Id,
     pub viewport_height: f32,
     pub current_scroll_offset: f32,
-    pub height_cache: HashMap<Id, f32>,
-    pub default_row_height: f32,
     pub show_argument_input: bool,
     pub is_argument_input_active: bool,
     /// Whether a command/ctrl modifier is currently held. Used to drop printable
@@ -144,10 +142,6 @@ pub struct ViewState {
     /// Last-known scroll offset and viewport height, for keyboard scroll-follow.
     pub scroll_offset: f32,
     pub viewport_height: f32,
-    /// One id per grid row (for measuring actual row heights).
-    pub row_ids: Vec<Id>,
-    /// Measured height of each grid row, keyed by its id.
-    pub row_heights: HashMap<Id, f32>,
 }
 
 impl ViewState {
@@ -180,8 +174,6 @@ impl ViewState {
             more_available: true,
             scroll_offset: 0.0,
             viewport_height: 0.0,
-            row_ids: Vec::new(),
-            row_heights: HashMap::new(),
         }
     }
 

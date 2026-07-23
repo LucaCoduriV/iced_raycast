@@ -340,6 +340,34 @@ pub fn divider<'a, Message: 'a>() -> Element<'a, Message> {
 }
 
 /// A clickable list entry with selection state styling
+/// Vertical breathing room above + below a list row's content (matches the
+/// button's vertical padding in [`list_item`]).
+const ROW_V_PADDING: f32 = 2.0 * spacing::SPACE_S;
+
+/// Pixel line height of a typography style (`font size × relative line-height`).
+fn line_height(style: typo::Style) -> f32 {
+    style.1.to_absolute(iced::Pixels(style.0)).0
+}
+
+/// Whether an entry renders a subtitle line (a non-empty comment/description).
+pub fn has_subtitle(entry: &ListEntry) -> bool {
+    entry.description().is_some_and(|d| !d.is_empty())
+}
+
+/// The exact rendered height of a list row, *derived from the same design
+/// tokens the row is built from* (icon size, type scale, spacing) rather than
+/// hardcoded. So adjusting the typography or spacing constants keeps rendering
+/// and keyboard-nav scroll math in lockstep automatically — no runtime
+/// measurement, no magic numbers to maintain.
+pub fn list_row_height(entry: &ListEntry) -> f32 {
+    let mut content = line_height(typo::TITLE_M);
+    if has_subtitle(entry) {
+        content += spacing::SPACE_XXS + line_height(typo::BODY_S);
+    }
+    // A row is as tall as the taller of its icon and its stacked text lines.
+    ROW_V_PADDING + content.max(icons::LG)
+}
+
 pub fn list_item<'a, Message>(
     entry: &'a ListEntry,
     is_selected: bool,
@@ -350,17 +378,25 @@ where
 {
     let kind: &str = entry.kind_label();
 
-    let content = row![
-        render_icon(entry.icon(), icons::LG),
-        column![
-            text(entry.name())
-                .typography(typo::TITLE_M)
-                .color(colors::ON_SURFACE),
-            text(entry.description().unwrap_or(""))
+    // Only carry a subtitle line when there's an actual comment; otherwise the
+    // row collapses to a single line instead of reserving empty vertical space.
+    let mut lines = column![
+        text(entry.name())
+            .typography(typo::TITLE_M)
+            .color(colors::ON_SURFACE),
+    ]
+    .spacing(spacing::SPACE_XXS);
+    if has_subtitle(entry) {
+        lines = lines.push(
+            text(entry.description().unwrap_or_default())
                 .typography(typo::BODY_S)
                 .color(colors::ON_SURFACE_VARIANT),
-        ]
-        .spacing(spacing::SPACE_XXS),
+        );
+    }
+
+    let content = row![
+        render_icon(entry.icon(), icons::LG),
+        lines,
         horizontal(),
         text(kind)
             .typography(typo::LABEL_L)
@@ -369,10 +405,20 @@ where
     .spacing(spacing::SPACE_M)
     .align_y(Alignment::Center);
 
+    // Pin each row to a fixed height (vertically centering its content) so the
+    // list has exactly two, predictable row heights.
+    let content = container(content).center_y(Length::Fill);
+
     button(content)
         .on_press(on_press)
         .width(Length::Fill)
-        .padding(spacing::SPACE_S)
+        .height(Length::Fixed(list_row_height(entry)))
+        .padding(iced::Padding {
+            top: 0.0,
+            bottom: 0.0,
+            left: spacing::SPACE_S,
+            right: spacing::SPACE_S,
+        })
         .style(move |_theme, status| {
             let is_hovered = status == button::Status::Hovered;
 

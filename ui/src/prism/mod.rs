@@ -17,14 +17,12 @@ use core::{
     ViewResponse, get_entities, search::SearchEngine,
 };
 use iced::{
-    Element, Length, Rectangle, Size, Subscription, Task,
-    advanced::widget::{operate, operation},
+    Element, Length, Subscription, Task,
     event, keyboard,
     widget::{
         Id, column, container,
         operation::{focus, scroll_to},
         scrollable,
-        selector::{self, Selector},
     },
 };
 
@@ -50,8 +48,6 @@ impl Prism {
             scroll_id,
             viewport_height: 0.0,
             current_scroll_offset: 0.0,
-            height_cache: std::collections::HashMap::new(),
-            default_row_height: 54.0,
             show_argument_input: false,
             is_argument_input_active: false,
             command_held: false,
@@ -160,7 +156,7 @@ impl Prism {
                 self.state.all_entries = wrapped_entries.clone();
                 self.state.entries = wrapped_entries;
 
-                measure_all_visible_items(&self.state)
+                Task::none()
             }
 
             PrismEvent::SearchInput(query) => {
@@ -215,13 +211,10 @@ impl Prism {
 
                 self.state.entries = entries;
 
-                Task::batch(vec![
-                    scroll_to(
-                        self.state.scroll_id.clone(),
-                        scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
-                    ),
-                    measure_all_visible_items(&self.state),
-                ])
+                scroll_to(
+                    self.state.scroll_id.clone(),
+                    scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+                )
             }
 
             PrismEvent::ArgumentInput(arg) => {
@@ -279,14 +272,6 @@ impl Prism {
                 }
                 self.state.selected_index = self.state.selected_index.saturating_sub(1);
                 smart_scroll(&self.state)
-            }
-
-            PrismEvent::ItemMeasured { id, rect } => {
-                if rect.height > 0.0 {
-                    self.state.height_cache.insert(id, rect.height);
-                    self.state.default_row_height = rect.height;
-                }
-                Task::none()
             }
 
             PrismEvent::EntrySelected(index) => {
@@ -655,15 +640,6 @@ impl Prism {
                 Task::none()
             }
 
-            PrismEvent::GridRowMeasured { id, height } => {
-                if height > 0.0
-                    && let Some(top) = self.state.views.last_mut()
-                {
-                    top.row_heights.insert(id, height);
-                }
-                Task::none()
-            }
-
             _ => Task::none(),
         }
     }
@@ -790,11 +766,7 @@ impl Prism {
                         scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
                     );
                 }
-                Task::batch(vec![
-                    reset_scroll,
-                    self.sync_grid_rows(true),
-                    self.ensure_grid_images(),
-                ])
+                Task::batch(vec![reset_scroll, self.ensure_grid_images()])
             }
             ViewResponse::Append(items) => {
                 if let Some(top) = self.state.views.last_mut() {
@@ -809,7 +781,7 @@ impl Prism {
                         top.loaded_count = grid_items.len();
                     }
                 }
-                Task::batch(vec![self.sync_grid_rows(false), self.ensure_grid_images()])
+                self.ensure_grid_images()
             }
             ViewResponse::Effect(effect) => {
                 let plugin_id = self
@@ -824,42 +796,40 @@ impl Prism {
     }
 
     /// Scroll the active grid so the selected cell stays visible under keyboard
-    /// navigation, using measured row heights (same approach as the list).
+    /// navigation. Row heights are derived deterministically from each row's
+    /// content (see [`views::grid_row_height`]) rather than measured.
     fn scroll_grid_to_selected(&mut self) -> Task<PrismEvent> {
         // Vertical gap between grid rows (matches `spacing::SPACE_M`) and the
         // scrollable's top padding (`spacing::SPACE_S`).
         const ROW_SPACING: f32 = 16.0;
         const TOP_PAD: f32 = 8.0;
-        const FALLBACK_ROW: f32 = 124.0;
 
         let Some(top) = self.state.views.last_mut() else {
             return Task::none();
         };
-        if !matches!(top.view.body, core::ViewBody::Grid { .. }) {
+        let core::ViewBody::Grid { items, columns } = &top.view.body else {
             return Task::none();
-        }
+        };
+        let columns = (*columns as usize).max(1);
+        let total_rows = items.len().div_ceil(columns);
+        let selected_row = (top.selected / columns).min(total_rows.saturating_sub(1));
 
-        let selected_row = top.selected / top.grid_columns();
-        // A measured row height to fall back to for rows not yet measured.
-        let default_row = top
-            .row_heights
-            .values()
-            .copied()
-            .next()
-            .unwrap_or(FALLBACK_ROW);
-        let height_of = |index: usize| {
-            top.row_ids
-                .get(index)
-                .and_then(|id| top.row_heights.get(id))
-                .copied()
-                .unwrap_or(default_row)
+        // A row is as tall as its tallest cell: taller when any cell in it
+        // carries a subtitle.
+        let row_height = |row: usize| -> f32 {
+            let start = row * columns;
+            let end = (start + columns).min(items.len());
+            let has_subtitle = items[start..end]
+                .iter()
+                .any(|item| item.subtitle.as_deref().is_some_and(|s| !s.is_empty()));
+            views::grid_row_height(has_subtitle)
         };
 
         let mut row_top = TOP_PAD;
         for row in 0..selected_row {
-            row_top += height_of(row) + ROW_SPACING;
+            row_top += row_height(row) + ROW_SPACING;
         }
-        let row_bottom = row_top + height_of(selected_row);
+        let row_bottom = row_top + row_height(selected_row);
 
         let viewport = if top.viewport_height > 0.0 {
             top.viewport_height
@@ -887,32 +857,6 @@ impl Prism {
             }
             None => Task::none(),
         }
-    }
-
-    /// Refresh the per-row ids for the active grid and measure their heights.
-    /// `reset` regenerates all ids (new search); otherwise ids are extended for
-    /// appended rows.
-    fn sync_grid_rows(&mut self, reset: bool) -> Task<PrismEvent> {
-        let Some(top) = self.state.views.last_mut() else {
-            return Task::none();
-        };
-        let core::ViewBody::Grid { items, columns } = &top.view.body else {
-            return Task::none();
-        };
-
-        let columns = (*columns as usize).max(1);
-        let rows = items.len().div_ceil(columns);
-
-        if reset {
-            top.row_ids.clear();
-            top.row_heights.clear();
-        }
-        while top.row_ids.len() < rows {
-            top.row_ids.push(Id::unique());
-        }
-        top.row_ids.truncate(rows);
-
-        measure_grid_rows(&top.row_ids)
     }
 
     /// Combined keyboard-nav response for a grid: keep the selection visible and
@@ -1356,10 +1300,6 @@ pub enum PrismEvent {
     EntriesLoaded(Vec<ListEntry>),
 
     Scrolled(scrollable::Viewport),
-    ItemMeasured {
-        id: Id,
-        rect: Rectangle,
-    },
     Run,
     EscapePressed,
     ExitApp,
@@ -1405,10 +1345,6 @@ pub enum PrismEvent {
         frames: Option<Vec<(iced::widget::image::Handle, u32)>>,
     },
     AnimationTick(std::time::Instant),
-    GridRowMeasured {
-        id: Id,
-        height: f32,
-    },
 
     // --- Plugin Manager (settings) ---
     /// Open the Plugin Manager settings screen.
@@ -1476,50 +1412,6 @@ mod tests {
     }
 }
 
-fn measure_all_visible_items(state: &PrismState) -> Task<PrismEvent> {
-    let tasks: Vec<Task<PrismEvent>> = state
-        .entries
-        .iter()
-        .map(|entry| measure_item(entry.id.clone()))
-        .collect();
-
-    Task::batch(tasks)
-}
-
-fn measure_item(id: Id) -> Task<PrismEvent> {
-    let selector = selector::id(id.clone()).find();
-    let operation = operation::map(selector, move |v| {
-        v.map(|widget| PrismEvent::ItemMeasured {
-            id: id.clone(),
-            rect: widget.bounds(),
-        })
-        .unwrap_or(PrismEvent::ItemMeasured {
-            id: id.clone(),
-            rect: Rectangle::with_size(Size::new(0.0, 0.0)),
-        })
-    });
-    operate(operation)
-}
-
-/// Measure each grid row's height (by its container id) into `GridRowMeasured`
-/// events — the grid analogue of [`measure_item`].
-fn measure_grid_rows(row_ids: &[Id]) -> Task<PrismEvent> {
-    let tasks: Vec<Task<PrismEvent>> = row_ids
-        .iter()
-        .map(|id| {
-            let id = id.clone();
-            let selector = selector::id(id.clone()).find();
-            let operation = operation::map(selector, move |v| PrismEvent::GridRowMeasured {
-                id: id.clone(),
-                height: v.map(|widget| widget.bounds().height).unwrap_or(0.0),
-            });
-            operate(operation)
-        })
-        .collect();
-
-    Task::batch(tasks)
-}
-
 /// Decode fetched image bytes into displayable frames. Handles are built once
 /// here (off the UI thread) so re-renders reuse the GPU textures.
 fn build_frames(bytes: Vec<u8>) -> Vec<(iced::widget::image::Handle, u32)> {
@@ -1580,24 +1472,18 @@ fn headers_above(state: &PrismState, index: usize) -> usize {
 
 fn smart_scroll(state: &PrismState) -> Task<PrismEvent> {
     let mut y_position = headers_above(state, state.selected_index) as f32 * HEADER_HEIGHT;
-    let mut target_height = state.default_row_height;
 
     for i in 0..state.selected_index {
         if let Some(entry) = state.entries.get(i) {
-            let h = *state
-                .height_cache
-                .get(&entry.id)
-                .unwrap_or(&state.default_row_height);
-            y_position += h;
+            y_position += widgets::list_row_height(&entry.entry);
         }
     }
 
-    if let Some(entry) = state.entries.get(state.selected_index) {
-        target_height = *state
-            .height_cache
-            .get(&entry.id)
-            .unwrap_or(&state.default_row_height);
-    }
+    let target_height = state
+        .entries
+        .get(state.selected_index)
+        .map(|entry| widgets::list_row_height(&entry.entry))
+        .unwrap_or(0.0);
 
     let item_top = y_position;
     let item_bottom = item_top + target_height;
