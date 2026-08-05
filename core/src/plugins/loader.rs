@@ -365,8 +365,14 @@ mod tests {
             })
         ));
 
-        // Live network path: opt-in via ICED_RAYCAST_TEST_NETWORK.
+        // Live network path: opt-in via ICED_RAYCAST_TEST_NETWORK. Clear the
+        // stored Giphy key first so the live probe uses the keyless FinerGifs
+        // provider (the earlier `set_preference` above pinned a bogus key).
         if std::env::var_os("ICED_RAYCAST_TEST_NETWORK").is_some() {
+            gif.set_preference(
+                "giphy_api_key",
+                PreferenceValue::Text(String::new()),
+            );
             let page1 = match gif.handle_event(ViewEvent {
                 view_id: "gif-grid".to_string(),
                 kind: ViewEventKind::Search("boss".to_string()),
