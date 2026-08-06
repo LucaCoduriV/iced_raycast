@@ -179,9 +179,7 @@ fn copy_image_from_path(path: &std::path::Path, _mime: &str) -> Result<()> {
     // is always lost on paste. A file-URL sidesteps the type-promotion pipeline
     // entirely: the receiving app attaches the .gif as a real file and plays
     // it back animated.
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| anyhow!("non-utf8 temp path"))?;
+    let path_str = path.to_str().ok_or_else(|| anyhow!("non-utf8 temp path"))?;
 
     let script = format!(
         r#"ObjC.import("AppKit");
@@ -252,8 +250,9 @@ fn copy_image_from_path(path: &std::path::Path, mime: &str) -> Result<()> {
         }
     }
 
-    Err(last_error
-        .unwrap_or_else(|| anyhow!("no image clipboard helper available (install wl-clipboard/xclip)")))
+    Err(last_error.unwrap_or_else(|| {
+        anyhow!("no image clipboard helper available (install wl-clipboard/xclip)")
+    }))
 }
 
 #[cfg(target_os = "linux")]

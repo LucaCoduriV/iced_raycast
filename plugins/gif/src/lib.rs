@@ -240,15 +240,13 @@ impl HostPlugin for GifPlugin {
                     .unwrap_or_default();
                 AbiViewResponse::Append(items)
             }
-            AbiViewEventKind::Activate(id) => {
-                AbiViewResponse::Effect(match self.copy_target() {
-                    CopyTarget::Link => AbiActionEffect::CopyToClipboard(id),
-                    CopyTarget::Gif => AbiActionEffect::CopyImageFromUrl {
-                        url: id,
-                        mime: RString::from("image/gif"),
-                    },
-                })
-            }
+            AbiViewEventKind::Activate(id) => AbiViewResponse::Effect(match self.copy_target() {
+                CopyTarget::Link => AbiActionEffect::CopyToClipboard(id),
+                CopyTarget::Gif => AbiActionEffect::CopyImageFromUrl {
+                    url: id,
+                    mime: RString::from("image/gif"),
+                },
+            }),
             AbiViewEventKind::Submit(_) => AbiViewResponse::None,
         }
     }
