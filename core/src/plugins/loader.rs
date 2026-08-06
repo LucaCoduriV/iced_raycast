@@ -435,6 +435,10 @@ fn convert_effect(effect: AbiActionEffect) -> ActionEffect {
     match effect {
         AbiActionEffect::None => ActionEffect::None,
         AbiActionEffect::CopyToClipboard(text) => ActionEffect::CopyToClipboard(text.to_string()),
+        AbiActionEffect::CopyImageFromUrl { url, mime } => ActionEffect::CopyImageFromUrl {
+            url: url.to_string(),
+            mime: mime.to_string(),
+        },
         AbiActionEffect::OpenUrl(url) => ActionEffect::OpenUrl(url.to_string()),
         AbiActionEffect::PushView(view) => ActionEffect::PushView(convert_view(view)),
         AbiActionEffect::Close => ActionEffect::Close,

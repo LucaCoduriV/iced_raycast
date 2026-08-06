@@ -81,6 +81,13 @@ pub enum AbiActionEffect {
     None,
     /// Copy the given text to the system clipboard.
     CopyToClipboard(RString),
+    /// Download the image at `url` and copy its bytes to the system clipboard
+    /// under the given MIME type (e.g. `"image/gif"`). The host performs the
+    /// download off the UI thread.
+    CopyImageFromUrl {
+        url: RString,
+        mime: RString,
+    },
     /// Open a URL in the user's default browser.
     OpenUrl(RString),
     /// Push a full-screen plugin view onto the navigation stack.

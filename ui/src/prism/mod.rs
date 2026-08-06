@@ -1024,6 +1024,7 @@ impl Prism {
         match effect {
             ActionEffect::None => Task::none(),
             ActionEffect::CopyToClipboard(text) => copy_and_exit(&text),
+            ActionEffect::CopyImageFromUrl { url, mime } => download_copy_and_exit(url, mime),
             ActionEffect::OpenUrl(url) => {
                 if let Err(e) = core::open::url(&url) {
                     eprintln!("Failed to open URL: {e}");
@@ -1557,6 +1558,25 @@ fn copy_and_exit(text: &str) -> Task<PrismEvent> {
         eprintln!("Failed to copy to clipboard: {}", e);
     }
     Task::done(PrismEvent::ExitApp)
+}
+
+/// Download `url` off the UI thread and copy its bytes to the clipboard as
+/// `mime`, then close the launcher. Runs the network fetch inside a
+/// `Task::perform` so the UI remains responsive while it's in flight.
+fn download_copy_and_exit(url: String, mime: String) -> Task<PrismEvent> {
+    Task::perform(
+        async move {
+            match core::net::fetch_bytes(&url) {
+                Ok(bytes) => {
+                    if let Err(e) = core::clipboard::copy_image(&bytes, &mime) {
+                        eprintln!("Failed to copy image to clipboard: {e}");
+                    }
+                }
+                Err(e) => eprintln!("Failed to download image {url}: {e}"),
+            }
+        },
+        |()| PrismEvent::ExitApp,
+    )
 }
 
 /// Approximate height of a `section_header` row, used to offset scroll math

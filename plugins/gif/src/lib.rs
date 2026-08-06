@@ -6,7 +6,8 @@
 //!   Office (US)* GIFs).
 //!
 //! Type `gif` to open a searchable grid; type to search; scroll down to load
-//! more. Selecting a GIF copies its link. Network calls happen in
+//! more. Selecting a GIF copies its link by default, or the GIF's bytes when
+//! the `copy_target` preference is set to `GIF`. Network calls happen in
 //! `handle_event`, which the host runs off the UI thread.
 
 use std::sync::RwLock;
@@ -24,11 +25,63 @@ const VIEW_ID: &str = "gif-grid";
 const COLUMNS: u32 = 4;
 const PAGE: usize = 12;
 
-#[derive(Default)]
+/// What the user gets when they activate a GIF.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopyTarget {
+    /// Put the GIF's URL text on the clipboard (default). Small, portable, works
+    /// everywhere but pastes as a link.
+    Link,
+    /// Download the GIF and put its raw bytes on the clipboard as `image/gif`,
+    /// so paste-aware apps embed the animation.
+    Gif,
+}
+
+impl CopyTarget {
+    const OPTIONS: &'static [&'static str] = &["Link", "GIF"];
+
+    fn from_index(index: u64) -> Self {
+        match index {
+            1 => CopyTarget::Gif,
+            _ => CopyTarget::Link,
+        }
+    }
+
+    fn to_index(self) -> u64 {
+        match self {
+            CopyTarget::Link => 0,
+            CopyTarget::Gif => 1,
+        }
+    }
+
+    fn submit_label(self) -> &'static str {
+        match self {
+            CopyTarget::Link => "Copy Link",
+            CopyTarget::Gif => "Copy GIF",
+        }
+    }
+}
+
+impl Default for CopyTarget {
+    fn default() -> Self {
+        CopyTarget::Link
+    }
+}
+
 struct GifPlugin {
     /// Giphy API key set via the settings preference (interior-mutable so
     /// `set_preference`, which takes `&self`, can update it). Empty means unset.
     api_key: RwLock<String>,
+    /// Whether Activate copies the URL or downloads the bytes.
+    copy_target: RwLock<CopyTarget>,
+}
+
+impl Default for GifPlugin {
+    fn default() -> Self {
+        GifPlugin {
+            api_key: RwLock::new(String::new()),
+            copy_target: RwLock::new(CopyTarget::default()),
+        }
+    }
 }
 
 impl GifPlugin {
@@ -52,6 +105,14 @@ impl GifPlugin {
     /// The provider chosen by the effective key.
     fn provider(&self) -> Provider {
         Provider::for_key(self.effective_key())
+    }
+
+    /// The current copy behavior, defaulting to `Link` if the lock is poisoned.
+    fn copy_target(&self) -> CopyTarget {
+        self.copy_target
+            .read()
+            .map(|guard| *guard)
+            .unwrap_or_default()
     }
 }
 
@@ -99,17 +160,38 @@ impl HostPlugin for GifPlugin {
                     selected: 2,
                 },
             },
+            AbiPreference {
+                id: "copy_target".into(),
+                label: "Copy on activate".into(),
+                hint: "Whether pressing Enter copies the GIF's link or the GIF \
+                       itself (paste-aware apps embed the animation)."
+                    .into(),
+                kind: AbiPreferenceKind::Select {
+                    options: RVec::from(
+                        CopyTarget::OPTIONS
+                            .iter()
+                            .map(|option| RString::from(*option))
+                            .collect::<Vec<_>>(),
+                    ),
+                    selected: self.copy_target().to_index(),
+                },
+            },
         ])
     }
 
     fn set_preference(&self, id: RStr<'_>, value: AbiPreferenceValue) {
-        if id.as_str() != "giphy_api_key" {
-            return;
-        }
-        if let AbiPreferenceValue::Text(key) = value {
-            if let Ok(mut guard) = self.api_key.write() {
-                *guard = key.to_string();
+        match (id.as_str(), value) {
+            ("giphy_api_key", AbiPreferenceValue::Text(key)) => {
+                if let Ok(mut guard) = self.api_key.write() {
+                    *guard = key.to_string();
+                }
             }
+            ("copy_target", AbiPreferenceValue::Choice(index)) => {
+                if let Ok(mut guard) = self.copy_target.write() {
+                    *guard = CopyTarget::from_index(index);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -130,7 +212,11 @@ impl HostPlugin for GifPlugin {
 
     fn run_command(&self, command_id: RStr<'_>, _argument: ROption<RString>) -> AbiActionEffect {
         if command_id.as_str() == "search" {
-            AbiActionEffect::PushView(grid_view(self.provider().title(), RVec::new()))
+            AbiActionEffect::PushView(grid_view(
+                self.provider().title(),
+                self.copy_target().submit_label(),
+                RVec::new(),
+            ))
         } else {
             AbiActionEffect::None
         }
@@ -142,9 +228,11 @@ impl HostPlugin for GifPlugin {
         }
 
         match event.kind {
-            AbiViewEventKind::Search(term) => {
-                AbiViewResponse::Update(search_view(term.as_str().trim(), &self.provider()))
-            }
+            AbiViewEventKind::Search(term) => AbiViewResponse::Update(search_view(
+                term.as_str().trim(),
+                &self.provider(),
+                self.copy_target().submit_label(),
+            )),
             AbiViewEventKind::LoadMore { term, offset } => {
                 let items = self
                     .provider()
@@ -153,18 +241,27 @@ impl HostPlugin for GifPlugin {
                 AbiViewResponse::Append(items)
             }
             AbiViewEventKind::Activate(id) => {
-                AbiViewResponse::Effect(AbiActionEffect::CopyToClipboard(id))
+                AbiViewResponse::Effect(match self.copy_target() {
+                    CopyTarget::Link => AbiActionEffect::CopyToClipboard(id),
+                    CopyTarget::Gif => AbiActionEffect::CopyImageFromUrl {
+                        url: id,
+                        mime: RString::from("image/gif"),
+                    },
+                })
             }
             AbiViewEventKind::Submit(_) => AbiViewResponse::None,
         }
     }
 }
 
-fn search_view(term: &str, provider: &Provider) -> AbiView {
+fn search_view(term: &str, provider: &Provider, submit_label: &str) -> AbiView {
     match provider.fetch(term, 0) {
-        Ok(items) if !items.is_empty() => grid_view(provider.title(), items),
-        Ok(_) => message_view(provider.empty_hint(term)),
-        Err(error) => message_view(&format!("Couldn't reach the GIF provider: {error}")),
+        Ok(items) if !items.is_empty() => grid_view(provider.title(), submit_label, items),
+        Ok(_) => message_view(provider.empty_hint(term), submit_label),
+        Err(error) => message_view(
+            &format!("Couldn't reach the GIF provider: {error}"),
+            submit_label,
+        ),
     }
 }
 
@@ -318,12 +415,12 @@ fn finer_gifs(term: &str, offset: usize) -> Result<RVec<AbiGridItem>, String> {
 
 // --- View helpers -----------------------------------------------------------
 
-fn grid_view(title: &str, items: RVec<AbiGridItem>) -> AbiView {
+fn grid_view(title: &str, submit_label: &str, items: RVec<AbiGridItem>) -> AbiView {
     AbiView {
         view_id: VIEW_ID.into(),
         title: RString::from(title),
         search_placeholder: RSome("Search GIFs…".into()),
-        submit_label: RSome("Copy Link".into()),
+        submit_label: RSome(RString::from(submit_label)),
         body: AbiViewBody::Grid {
             columns: COLUMNS,
             items,
@@ -331,9 +428,10 @@ fn grid_view(title: &str, items: RVec<AbiGridItem>) -> AbiView {
     }
 }
 
-fn message_view(message: &str) -> AbiView {
+fn message_view(message: &str, submit_label: &str) -> AbiView {
     grid_view(
         "GIFs",
+        submit_label,
         RVec::from(vec![AbiGridItem {
             id: String::new().into(),
             title: RString::from(message),

@@ -76,6 +76,9 @@ pub enum ActionEffect {
     None,
     /// Copy the given text to the system clipboard.
     CopyToClipboard(String),
+    /// Download the image at `url` (off the UI thread) and copy its bytes to
+    /// the system clipboard under the given MIME type (e.g. `"image/gif"`).
+    CopyImageFromUrl { url: String, mime: String },
     /// Open a URL in the user's default browser.
     OpenUrl(String),
     /// Push a full-screen plugin view onto the navigation stack.
