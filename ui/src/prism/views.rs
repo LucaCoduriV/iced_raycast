@@ -20,6 +20,24 @@ use crate::design_system::{colors, spacing, typo};
 const GRID_TITLE_HEIGHT: f32 = 32.0;
 /// Fixed height of a grid cell's optional subtitle (one line of `BODY_S`).
 const GRID_SUBTITLE_HEIGHT: f32 = 16.0;
+/// Fixed height of a grid cell's image tile.
+const GRID_IMAGE_HEIGHT: f32 = 96.0;
+
+/// The exact rendered height of a grid row, given whether any of its cells
+/// carry a subtitle. Cells are built from fixed-height pieces, so this is exact
+/// and keyboard-nav scroll math needs no (unreliable) async measurement.
+pub fn grid_row_height(has_subtitle: bool) -> f32 {
+    // Button padding (top + bottom) + image + image→title gap + title.
+    let base = 2.0 * spacing::SPACE_XS
+        + GRID_IMAGE_HEIGHT
+        + spacing::SPACE_XS
+        + GRID_TITLE_HEIGHT;
+    if has_subtitle {
+        base + spacing::SPACE_XS + GRID_SUBTITLE_HEIGHT
+    } else {
+        base
+    }
+}
 
 /// Render the active plugin view: header, optional search, body, footer.
 pub fn view_screen<'a>(
@@ -51,14 +69,9 @@ pub fn view_screen<'a>(
     screen = screen.push(super::widgets::divider());
 
     let body: Element<PrismEvent> = match &state.view.body {
-        ViewBody::Grid { columns, items } => grid_body(
-            *columns,
-            items,
-            state.selected,
-            images,
-            elapsed_ms,
-            &state.row_ids,
-        ),
+        ViewBody::Grid { columns, items } => {
+            grid_body(*columns, items, state.selected, images, elapsed_ms)
+        }
         ViewBody::List { items } => list_body(items, state.selected),
         ViewBody::Detail { body, metadata } => detail_body(body, metadata),
         ViewBody::Form { .. } => form_body(state),
@@ -145,7 +158,6 @@ fn grid_body<'a>(
     selected: usize,
     images: &'a ImageCache,
     elapsed_ms: u64,
-    row_ids: &'a [iced::widget::Id],
 ) -> Element<'a, PrismEvent> {
     let columns = columns.max(1) as usize;
     let mut grid = column![].spacing(spacing::SPACE_M);
@@ -161,12 +173,7 @@ fn grid_body<'a>(
             cells = cells.push(horizontal());
         }
 
-        // Tag the row with its id so the host can measure its height.
-        let row: Element<PrismEvent> = match row_ids.get(row_index) {
-            Some(id) => container(cells).id(id.clone()).into(),
-            None => cells.into(),
-        };
-        grid = grid.push(row);
+        grid = grid.push(cells);
     }
 
     grid.into()
@@ -242,7 +249,7 @@ fn image_tile(element: Element<'_, PrismEvent>) -> Element<'_, PrismEvent> {
     container(element)
         .center(Length::Fill)
         .width(Length::Fill)
-        .height(Length::Fixed(96.0))
+        .height(Length::Fixed(GRID_IMAGE_HEIGHT))
         .style(|_| container::Style {
             background: Some(colors::ON_SURFACE.scale_alpha(0.06).into()),
             border: iced::Border {
